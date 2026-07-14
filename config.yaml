@@ -1,0 +1,93 @@
+# ============================================================================
+# Cashcrow Smartbin — Default Configuration
+# ============================================================================
+# All parameters are overridable via CLI flags (see main.py --help).
+# CLI args take precedence over values in this file.
+# ============================================================================
+
+model:
+  # Path to YOLO weights. Replace with fine-tuned waste model when available.
+  # Accepts any Ultralytics-compatible format: .pt, .onnx, .engine (TensorRT).
+  weights: "yolo11n.pt"
+
+  # Minimum detection confidence. Detections below this are discarded before
+  # they enter the tracking/voting pipeline.
+  confidence_threshold: 0.25
+
+  # Inference device. "auto" lets Ultralytics pick (CUDA if available, else CPU).
+  # Explicit options: "cpu", "cuda:0", "0" (GPU index).
+  device: "auto"
+
+trigger:
+  # Trigger method. Only "frame_diff" is implemented; future options include
+  # "ir_sensor" and "weight_sensor" for hardware-based triggering.
+  method: "frame_diff"
+
+  # Pixel intensity difference threshold (0–255). Lower = more sensitive.
+  motion_threshold: 25.0
+
+  # Fraction of the frame area that must exceed the motion threshold to
+  # consider it "triggered". Prevents noise from firing the detector.
+  area_fraction: 0.005
+
+  # Optional region of interest [x1, y1, x2, y2] in pixels. If null, the
+  # entire frame is analysed. Use this to focus on the bin opening area.
+  roi: null
+
+  # Background adaptation rate (0–1). Higher = faster adaptation to lighting
+  # changes while IDLE. 0 = never update background.
+  background_alpha: 0.05
+
+buffer:
+  # Maximum number of frames in the active detection window. Once reached,
+  # the state machine finalizes and returns to IDLE.
+  active_window_size: 30
+
+  # Number of consecutive frames with zero detections (while ACTIVE) that
+  # triggers an early finalization. Prevents hanging if the item is removed.
+  idle_timeout_frames: 8
+
+  # Minimum frames a track must appear in before its vote is considered valid.
+  # Tracks with fewer appearances are silently dropped.
+  min_frames_for_decision: 5
+
+tracker:
+  # Tracking algorithm. Only "bytetrack" is supported — BoT-SORT and DeepSORT
+  # were evaluated and rejected for this use case (see architecture docs).
+  type: "bytetrack"
+
+  # Number of frames to retain a lost track before deleting it.
+  track_buffer: 30
+
+  # IoU matching threshold for associating detections to existing tracks.
+  match_thresh: 0.8
+
+voter:
+  # Minimum fraction of frames where the winning label must appear for the
+  # decision to be marked as "certain". Below this → uncertain.
+  min_consensus_ratio: 0.4
+
+camera:
+  # Video source. Integer = webcam index (0 = default). String = path to a
+  # video file. Both use the same OpenCV VideoCapture code path.
+  source: 0
+
+  # Maximum FPS for the processing loop. Set to 0 for uncapped (not
+  # recommended on edge devices — wastes power on redundant frames).
+  fps_limit: 15
+
+logging:
+  # Python logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL.
+  level: "INFO"
+
+  # Path to a log file. null = log to stderr only.
+  output_file: null
+
+  # Path to the structured JSONL decision log. Each finalized decision is
+  # appended as one JSON object per line.
+  decision_log: "decisions.jsonl"
+
+display:
+  # Whether to show an annotated live preview window (OpenCV imshow).
+  # Disable on headless edge deployments.
+  show: false
