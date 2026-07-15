@@ -1,6 +1,6 @@
 # Smartbin — AI-Powered Waste Detection Pipeline
 
-🚧 **Early-stage prototype** — Not production-ready. Active experimentation with YOLO + ByteTrack for real-time waste classification on edge devices.
+**Early-stage prototype** — Not production-ready. Active experimentation with YOLO + ByteTrack for real-time waste classification on edge devices.
 
 Smartbin is a computer vision pipeline designed to detect and classify waste items in real-time using a motion-triggered, multi-frame consensus voting system. Built for low-power edge deployment (Jetson Orin Nano), it combines motion detection, object tracking, and intelligent frame aggregation to make stable waste classification decisions despite occlusion and noise.
 
@@ -33,7 +33,7 @@ Smartbin is a computer vision pipeline designed to detect and classify waste ite
 
 ## Current Status
 
-### ✅ What Works
+###  What Works
 - Motion detection via frame differencing (configurable threshold)
 - YOLO11 inference with ByteTrack tracking
 - Sliding-window majority voting with per-track histories
@@ -41,7 +41,7 @@ Smartbin is a computer vision pipeline designed to detect and classify waste ite
 - JSONL structured output logging
 - Tests runnable without GPU or camera
 
-### ⚠️ Known Limitations
+###  Known Limitations
 - **Generic YOLO model** — Uses COCO pretrained weights. Does not distinguish waste types (plastic, paper, metal, organic). Fine-tuned model required for real-world deployment.
 - **No TensorRT support yet** — Only Ultralytics YOLO via PyTorch. TensorRT stub present for future Jetson optimization.
 - **Limited edge testing** — Developed locally; not yet validated on actual Jetson hardware.
@@ -336,4 +336,4 @@ Proprietary — Cashcrow Technologies.
 
 Built as an internship prototype. Questions or ideas? Open an issue or reach out to the maintainer.
 
-**Happy detecting! 🎯**
+**Happy detecting! **
