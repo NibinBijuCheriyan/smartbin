@@ -42,6 +42,8 @@ class DecisionEvent:
     total_frames: int  # Total frames this track appeared in
     is_certain: bool  # True if consensus ratio met threshold
     timestamp: str  # ISO 8601 UTC timestamp
+    hand_id: Optional[int] = None
+    is_held_by_hand: bool = False
 
     def to_dict(self) -> dict:
         """Serialize to a plain dict for JSON output."""
@@ -59,6 +61,8 @@ class DecisionEvent:
         frame_count: int,
         total_frames: int,
         is_certain: bool,
+        hand_id: Optional[int] = None,
+        is_held_by_hand: bool = False,
     ) -> DecisionEvent:
         """Factory with automatic UTC timestamp."""
         return DecisionEvent(
@@ -69,6 +73,8 @@ class DecisionEvent:
             total_frames=total_frames,
             is_certain=is_certain,
             timestamp=datetime.now(timezone.utc).isoformat(),
+            hand_id=hand_id,
+            is_held_by_hand=is_held_by_hand,
         )
 
 

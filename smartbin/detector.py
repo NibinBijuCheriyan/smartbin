@@ -32,13 +32,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class Detection:
-    """A single detection with its track ID from ByteTrack."""
+    """A single detection with its track ID from ByteTrack and optional hand tracking data."""
 
     track_id: int  # -1 if tracker hasn't assigned an ID yet
     class_id: int
     class_name: str
     confidence: float
     bbox: tuple  # (x1, y1, x2, y2) in pixel coordinates
+    hand_id: Optional[int] = None
+    is_held_by_hand: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -55,8 +57,12 @@ class BaseDetector(ABC):
     """
 
     @abstractmethod
-    def detect(self, frame: np.ndarray) -> List[Detection]:
-        """Run detection + tracking on a single frame."""
+    def detect(
+        self,
+        frame: np.ndarray,
+        crop_roi: Optional[Tuple[int, int, int, int]] = None,
+    ) -> List[Detection]:
+        """Run detection + tracking on a single frame or cropped ROI."""
 
     @abstractmethod
     def reset_tracker(self) -> None:
@@ -130,9 +136,13 @@ class YOLODetector(BaseDetector):
             self._tracker_type,
         )
 
-    def detect(self, frame: np.ndarray) -> List[Detection]:
+    def detect(
+        self,
+        frame: np.ndarray,
+        crop_roi: Optional[Tuple[int, int, int, int]] = None,
+    ) -> List[Detection]:
         """
-        Run YOLO detection + ByteTrack tracking on a single frame.
+        Run YOLO detection + ByteTrack tracking on a single frame or cropped ROI.
 
         Returns a list of Detection objects, one per detected item.
         Items without a track ID (first frame, tracker warm-up) are
@@ -140,8 +150,17 @@ class YOLODetector(BaseDetector):
         """
         self._ensure_loaded()
 
+        input_frame = frame
+        offset_x, offset_y = 0, 0
+
+        if crop_roi is not None:
+            x1, y1, x2, y2 = crop_roi
+            if x2 > x1 and y2 > y1:
+                input_frame = frame[y1:y2, x1:x2]
+                offset_x, offset_y = x1, y1
+
         results = self._model.track(
-            source=frame,
+            source=input_frame,
             persist=True,
             tracker=self._tracker_type,
             conf=self._conf_threshold,
@@ -174,12 +193,20 @@ class YOLODetector(BaseDetector):
         names = result.names  # {class_id: class_name} mapping
 
         for i in range(len(boxes)):
+            box = bboxes[i].tolist()
+            # Map back to full frame coordinates if cropped
+            full_box = (
+                box[0] + offset_x,
+                box[1] + offset_y,
+                box[2] + offset_x,
+                box[3] + offset_y,
+            )
             det = Detection(
                 track_id=int(track_ids[i]),
                 class_id=int(classes[i]),
                 class_name=names.get(int(classes[i]), f"class_{classes[i]}"),
                 confidence=float(confs[i]),
-                bbox=tuple(bboxes[i].tolist()),
+                bbox=full_box,
             )
             detections.append(det)
 
@@ -207,40 +234,26 @@ class YOLODetector(BaseDetector):
 
 
 # ---------------------------------------------------------------------------
-# TensorRT detector stub — extension point
+# TensorRT detector implementation
 # ---------------------------------------------------------------------------
 
-# TODO: Implement TensorRTDetector for production Jetson deployment.
-#
-# class TensorRTDetector(BaseDetector):
-#     """
-#     TensorRT-accelerated detector for Jetson deployment.
-#
-#     Uses a .engine file exported from the YOLO model. The tracking
-#     logic (ByteTrack) runs separately via the `supervision` or
-#     standalone `bytetrack` Python package, since Ultralytics' built-in
-#     tracker is tied to its own inference pipeline.
-#
-#     Swap-in steps:
-#     1. Export YOLO model: `yolo export model=best.pt format=engine`
-#     2. Set config.model.weights to the .engine file path.
-#     3. Update detector factory to return TensorRTDetector when weights
-#        end with '.engine'.
-#     """
-#
-#     def __init__(self, model_config, tracker_config):
-#         # Load TensorRT engine
-#         # Initialize standalone ByteTrack
-#         pass
-#
-#     def detect(self, frame):
-#         # Run TensorRT inference
-#         # Run ByteTrack on detections
-#         # Return List[Detection]
-#         pass
-#
-#     def reset_tracker(self):
-#         pass
+
+class TensorRTDetector(YOLODetector):
+    """
+    TensorRT-accelerated detector for Jetson deployment.
+
+    Uses a .engine file exported from the YOLO model. Leverages Ultralytics
+    native TensorRT inference runtime to execute the engine on Nvidia Jetson GPUs
+    and run ByteTrack for object tracking.
+    """
+
+    def __init__(
+        self,
+        model_config: ModelConfig,
+        tracker_config: TrackerConfig,
+    ) -> None:
+        super().__init__(model_config, tracker_config)
+        logger.info("Initializing TensorRTDetector with engine weights: %s", model_config.weights)
 
 
 def create_detector(
@@ -248,5 +261,8 @@ def create_detector(
     tracker_config: TrackerConfig,
 ) -> BaseDetector:
     """Factory function — returns the appropriate detector for the config."""
-    # TODO: Check for .engine extension and return TensorRTDetector
+    weights = str(model_config.weights)
+    if weights.endswith(".engine"):
+        return TensorRTDetector(model_config, tracker_config)
     return YOLODetector(model_config, tracker_config)
+

@@ -77,6 +77,15 @@ class DisplayConfig:
 
 
 @dataclass(frozen=True)
+class HandTrackingConfig:
+    enabled: bool = False
+    confidence_threshold: float = 0.3
+    max_hand_distance_px: float = 150.0
+    roi_padding_factor: float = 1.4
+    roi_crop_enabled: bool = True
+
+
+@dataclass(frozen=True)
 class SmartbinConfig:
     """Top-level configuration for the entire pipeline."""
 
@@ -88,6 +97,7 @@ class SmartbinConfig:
     camera: CameraConfig = field(default_factory=CameraConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     display: DisplayConfig = field(default_factory=DisplayConfig)
+    hand_tracking: HandTrackingConfig = field(default_factory=HandTrackingConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +142,7 @@ def load_config_from_yaml(path: Union[str, Path]) -> SmartbinConfig:
         camera=_build_section(CameraConfig, raw, "camera"),
         logging=_build_section(LoggingConfig, raw, "logging"),
         display=_build_section(DisplayConfig, raw, "display"),
+        hand_tracking=_build_section(HandTrackingConfig, raw, "hand_tracking"),
     )
 
 
@@ -177,6 +188,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Show annotated live preview window",
     )
     parser.add_argument(
+        "--track-hands",
+        action="store_true",
+        default=None,
+        help="Enable hand tracking and hand-held object detection",
+    )
+    parser.add_argument(
+        "--hand-roi",
+        action="store_true",
+        default=None,
+        help="Enable hand ROI cropping for efficient frame detection",
+    )
+    parser.add_argument(
         "--log-level",
         type=str,
         default=None,
@@ -214,71 +237,48 @@ def load_config(argv: Optional[list] = None) -> SmartbinConfig:
         )
         cfg = SmartbinConfig()
 
-    # Apply CLI overrides — since dataclasses are frozen, we reconstruct
-    # only the sections that need changes.
-    model_overrides = {}
-    if args.weights is not None:
-        model_overrides["weights"] = args.weights
-    if args.confidence is not None:
-        model_overrides["confidence_threshold"] = args.confidence
-    if model_overrides:
-        cfg = SmartbinConfig(
-            model=ModelConfig(
-                weights=model_overrides.get("weights", cfg.model.weights),
-                confidence_threshold=model_overrides.get(
-                    "confidence_threshold", cfg.model.confidence_threshold
-                ),
-                device=cfg.model.device,
-            ),
-            trigger=cfg.trigger,
-            buffer=cfg.buffer,
-            tracker=cfg.tracker,
-            voter=cfg.voter,
-            camera=cfg.camera,
-            logging=cfg.logging,
-            display=cfg.display,
-        )
+    hand_enabled = cfg.hand_tracking.enabled
+    if args.track_hands is not None and args.track_hands:
+        hand_enabled = True
 
-    if args.source is not None:
-        source = _parse_source(args.source)
-        cfg = SmartbinConfig(
-            model=cfg.model,
-            trigger=cfg.trigger,
-            buffer=cfg.buffer,
-            tracker=cfg.tracker,
-            voter=cfg.voter,
-            camera=CameraConfig(source=source, fps_limit=cfg.camera.fps_limit),
-            logging=cfg.logging,
-            display=cfg.display,
-        )
+    roi_enabled = cfg.hand_tracking.roi_crop_enabled
+    if args.hand_roi is not None and args.hand_roi:
+        roi_enabled = True
 
-    if args.show is not None and args.show:
-        cfg = SmartbinConfig(
-            model=cfg.model,
-            trigger=cfg.trigger,
-            buffer=cfg.buffer,
-            tracker=cfg.tracker,
-            voter=cfg.voter,
-            camera=cfg.camera,
-            logging=cfg.logging,
-            display=DisplayConfig(show=True),
-        )
+    ht_cfg = HandTrackingConfig(
+        enabled=hand_enabled,
+        confidence_threshold=cfg.hand_tracking.confidence_threshold,
+        max_hand_distance_px=cfg.hand_tracking.max_hand_distance_px,
+        roi_padding_factor=cfg.hand_tracking.roi_padding_factor,
+        roi_crop_enabled=roi_enabled,
+    )
 
-    if args.log_level is not None:
-        cfg = SmartbinConfig(
-            model=cfg.model,
-            trigger=cfg.trigger,
-            buffer=cfg.buffer,
-            tracker=cfg.tracker,
-            voter=cfg.voter,
-            camera=cfg.camera,
-            logging=LoggingConfig(
-                level=args.log_level,
-                output_file=cfg.logging.output_file,
-                decision_log=cfg.logging.decision_log,
-            ),
-            display=cfg.display,
-        )
+    # Apply CLI overrides
+    model_weights = args.weights if args.weights is not None else cfg.model.weights
+    model_conf = args.confidence if args.confidence is not None else cfg.model.confidence_threshold
+    source = _parse_source(args.source) if args.source is not None else cfg.camera.source
+    show = args.show if args.show is not None else cfg.display.show
+    log_lvl = args.log_level if args.log_level is not None else cfg.logging.level
+
+    cfg = SmartbinConfig(
+        model=ModelConfig(
+            weights=model_weights,
+            confidence_threshold=model_conf,
+            device=cfg.model.device,
+        ),
+        trigger=cfg.trigger,
+        buffer=cfg.buffer,
+        tracker=cfg.tracker,
+        voter=cfg.voter,
+        camera=CameraConfig(source=source, fps_limit=cfg.camera.fps_limit),
+        logging=LoggingConfig(
+            level=log_lvl,
+            output_file=cfg.logging.output_file,
+            decision_log=cfg.logging.decision_log,
+        ),
+        display=DisplayConfig(show=show),
+        hand_tracking=ht_cfg,
+    )
 
     return cfg
 

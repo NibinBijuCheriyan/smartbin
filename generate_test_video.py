@@ -36,22 +36,30 @@ def main():
         frame = np.full((HEIGHT, WIDTH, 3), bg_color, dtype=np.uint8)
         writer.write(frame)
 
-    # Phase 2: Moving rectangle (simulates an item approaching the bin)
+    # Phase 2: Moving hand + item (simulates a person holding an item approaching the bin)
     print(f"Writing {MOTION_FRAMES} motion frames...")
     obj_w, obj_h = 120, 100
+    hand_w, hand_h = 90, 90
     for i in range(MOTION_FRAMES):
         frame = np.full((HEIGHT, WIDTH, 3), bg_color, dtype=np.uint8)
 
-        # Object slides from left to center
+        # Object & hand slide from left to center
         progress = i / MOTION_FRAMES
         x = int(50 + progress * (WIDTH // 2 - 50))
         y = HEIGHT // 2 - obj_h // 2
+
+        # Draw hand (skin tone: BGR 120, 150, 200) holding the item
+        cv2.rectangle(frame, (x - 40, y + 20), (x - 40 + hand_w, y + 20 + hand_h), (120, 150, 200), -1)
+        cv2.putText(
+            frame, "HAND", (x - 30, y + 60),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2,
+        )
 
         # Draw a colourful "item" (bottle-like shape)
         cv2.rectangle(frame, (x, y), (x + obj_w, y + obj_h), (0, 180, 255), -1)
         cv2.rectangle(frame, (x + 40, y - 30), (x + 80, y), (0, 140, 200), -1)
 
-        # Add some text label
+        # Add text label
         cv2.putText(
             frame, "ITEM", (x + 15, y + 60),
             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2,

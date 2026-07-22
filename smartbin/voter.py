@@ -39,6 +39,8 @@ class VoteResult:
     agreeing_frames: int  # Number of frames that predicted the winning class
     total_frames: int  # Total frames this track appeared in
     is_certain: bool  # True if consensus ratio >= threshold
+    hand_id: Optional[int] = None
+    is_held_by_hand: bool = False
 
 
 class MajorityVoter:
@@ -50,7 +52,8 @@ class MajorityVoter:
     2. Winning label = most frequent. Ties broken by highest total confidence.
     3. Consensus-conditioned confidence = mean confidence of ONLY the frames
        that predicted the winning label.
-    4. If winning_count / total_frames < min_consensus_ratio → uncertain.
+    4. Aggregate hand association IDs.
+    5. If winning_count / total_frames < min_consensus_ratio → uncertain.
     """
 
     def __init__(self, config: VoterConfig) -> None:
@@ -58,15 +61,15 @@ class MajorityVoter:
 
     def vote(
         self,
-        track_histories: Dict[int, List[Tuple[str, float]]],
+        track_histories: Dict[int, List[Tuple]],
         min_frames: int = 1,
     ) -> List[VoteResult]:
         """
         Run majority vote on all tracks.
 
         Args:
-            track_histories: Mapping of track_id → list of (class_name, confidence)
-                             tuples, one per frame the track appeared in.
+            track_histories: Mapping of track_id → list of tuples:
+                             (class_name, confidence) or (class_name, confidence, hand_id, is_held_by_hand)
             min_frames: Minimum number of frames a track must have to produce
                         a valid vote. Tracks with fewer frames are dropped.
 
@@ -93,30 +96,38 @@ class MajorityVoter:
     def _vote_single_track(
         self,
         track_id: int,
-        predictions: List[Tuple[str, float]],
+        predictions: List[Tuple],
     ) -> VoteResult:
         """Compute majority vote for one track."""
         total_frames = len(predictions)
 
-        # Step 1: Count class occurrences
-        class_names = [cls for cls, _ in predictions]
+        # Handle predictions tuples of varying length (2 or 4 items)
+        class_names = []
+        hand_ids = []
+        held_flags = []
+
+        for item in predictions:
+            class_names.append(item[0])
+            if len(item) >= 4:
+                if item[2] is not None:
+                    hand_ids.append(item[2])
+                held_flags.append(item[3])
+
         counts = Counter(class_names)
 
         # Step 2: Find winning class.
-        # Ties broken by highest total confidence for that class.
         winning_class = max(
             counts.keys(),
             key=lambda cls: (
                 counts[cls],
-                sum(conf for c, conf in predictions if c == cls),
+                sum(item[1] for item in predictions if item[0] == cls),
             ),
         )
         agreeing_frames = counts[winning_class]
 
-        # Step 3: Consensus-conditioned confidence — average confidence
-        # only from frames that agreed with the winning label.
+        # Step 3: Consensus-conditioned confidence
         agreeing_confs = [
-            conf for cls, conf in predictions if cls == winning_class
+            item[1] for item in predictions if item[0] == winning_class
         ]
         consensus_confidence = (
             sum(agreeing_confs) / len(agreeing_confs) if agreeing_confs else 0.0
@@ -126,14 +137,19 @@ class MajorityVoter:
         consensus_ratio = agreeing_frames / total_frames
         is_certain = consensus_ratio >= self._min_consensus_ratio
 
+        # Determine hand tracking summary
+        winning_hand_id = Counter(hand_ids).most_common(1)[0][0] if hand_ids else None
+        is_held_by_hand = (sum(held_flags) > total_frames / 2.0) if held_flags else False
+
         logger.debug(
-            "Voter: track %d → %s (%.3f conf, %d/%d frames, %s)",
+            "Voter: track %d → %s (%.3f conf, %d/%d frames, %s, hand=%s)",
             track_id,
             winning_class,
             consensus_confidence,
             agreeing_frames,
             total_frames,
             "CERTAIN" if is_certain else "UNCERTAIN",
+            str(winning_hand_id),
         )
 
         return VoteResult(
@@ -143,4 +159,6 @@ class MajorityVoter:
             agreeing_frames=agreeing_frames,
             total_frames=total_frames,
             is_certain=is_certain,
+            hand_id=winning_hand_id,
+            is_held_by_hand=is_held_by_hand,
         )

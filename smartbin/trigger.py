@@ -130,10 +130,30 @@ class FrameDiffTrigger(BaseTrigger):
         logger.debug("Trigger: background reset")
 
 
+class HandPresenceTrigger(BaseTrigger):
+    """
+    Trigger based on hand presence.
+
+    Uses HandTracker to detect if a hand enters the frame or specified ROI.
+    """
+
+    def __init__(self, config: TriggerConfig) -> None:
+        from smartbin.hand_tracker import HandTracker
+        self._tracker = HandTracker()
+
+    def check(self, frame: np.ndarray) -> bool:
+        hands = self._tracker.detect_and_track(frame)
+        return len(hands) > 0
+
+    def reset(self) -> None:
+        self._tracker.reset()
+
+
 def create_trigger(config: TriggerConfig) -> BaseTrigger:
     """Factory function — returns the appropriate trigger for the config."""
     if config.method == "frame_diff":
         return FrameDiffTrigger(config)
-    # TODO: Add "ir_sensor" and "weight_sensor" cases here when hardware
-    # integration is implemented.
+    elif config.method == "hand_presence":
+        return HandPresenceTrigger(config)
     raise ValueError(f"Unknown trigger method: {config.method}")
+

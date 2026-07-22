@@ -58,6 +58,18 @@ class SmartbinPipeline:
             config.model, config.tracker
         )
 
+        # Hand tracking component
+        self._hand_tracker = None
+        if config.hand_tracking.enabled:
+            from smartbin.hand_tracker import HandTracker
+            self._hand_tracker = HandTracker(
+                confidence_threshold=config.hand_tracking.confidence_threshold,
+                max_distance_px=config.hand_tracking.max_hand_distance_px,
+            )
+
+        self._current_hands = []
+        self._current_detections = []
+
         # Decision output hooks
         self._hooks: List[DecisionHook] = self._create_hooks(config)
 
@@ -180,10 +192,26 @@ class SmartbinPipeline:
         """
         state = self._state_machine.state
 
+        # Run hand tracking if enabled
+        crop_roi = None
+        hands = []
+
+        if self._hand_tracker is not None:
+            hands = self._hand_tracker.detect_and_track(frame)
+            self._current_hands = hands
+
+            if hands and self._config.hand_tracking.roi_crop_enabled:
+                from smartbin.hand_tracker import get_hand_roi
+                crop_roi = get_hand_roi(
+                    frame.shape,
+                    hands,
+                    padding_factor=self._config.hand_tracking.roi_padding_factor,
+                )
+
         if state == BinState.IDLE:
             # Only run the trigger — detector stays dormant
             triggered = self._trigger.check(frame)
-            if triggered:
+            if triggered or (self._hand_tracker and hands):
                 logger.info("Trigger fired at frame %d — activating", frame_num)
                 self._state_machine.activate()
                 self._detector.reset_tracker()
@@ -193,12 +221,23 @@ class SmartbinPipeline:
         elif state == BinState.ACTIVE:
             # Run detection + tracking
             try:
-                detections = self._detector.detect(frame)
+                detections = self._detector.detect(frame, crop_roi=crop_roi)
+
+                # Associate hands and objects if hand tracking active
+                if self._hand_tracker is not None and hands:
+                    from smartbin.hand_tracker import associate_hands_and_objects
+                    detections = associate_hands_and_objects(
+                        hands,
+                        detections,
+                        max_dist_px=self._config.hand_tracking.max_hand_distance_px,
+                    )
+                self._current_detections = detections
             except Exception:
                 logger.exception(
                     "Detector error at frame %d — treating as empty", frame_num
                 )
                 detections = []
+                self._current_detections = []
 
             # Feed to state machine (may trigger finalization)
             events = self._state_machine.feed(detections)
@@ -215,7 +254,7 @@ class SmartbinPipeline:
                 logger.exception("Hook %s failed", type(hook).__name__)
 
     def _display_frame(self, frame: np.ndarray, frame_num: int) -> None:
-        """Draw state overlay and show frame in a window."""
+        """Draw state overlay, hand bboxes, and waste items on frame."""
         state = self._state_machine.state
         color = (0, 255, 0) if state == BinState.ACTIVE else (128, 128, 128)
         label = f"{state.name} | frame {frame_num}"
@@ -230,6 +269,37 @@ class SmartbinPipeline:
             frame, label, (10, 30),
             cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2,
         )
+
+        # Draw hands
+        for hand in self._current_hands:
+            hx1, hy1, hx2, hy2 = map(int, hand.bbox)
+            cv2.rectangle(frame, (hx1, hy1), (hx2, hy2), (255, 165, 0), 2)
+            cv2.putText(
+                frame,
+                f"Hand #{hand.hand_id}",
+                (hx1, max(15, hy1 - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 165, 0),
+                2,
+            )
+
+        # Draw waste item detections
+        for det in self._current_detections:
+            dx1, dy1, dx2, dy2 = map(int, det.bbox)
+            box_color = (0, 255, 255) if det.is_held_by_hand else (0, 255, 0)
+            cv2.rectangle(frame, (dx1, dy1), (dx2, dy2), box_color, 2)
+            held_str = f" [Hand #{det.hand_id}]" if det.is_held_by_hand else ""
+            cv2.putText(
+                frame,
+                f"{det.class_name} {det.confidence:.2f}{held_str}",
+                (dx1, max(15, dy1 - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                box_color,
+                2,
+            )
+
         cv2.imshow("Smartbin", frame)
 
     def _shutdown(self, cap: cv2.VideoCapture) -> None:

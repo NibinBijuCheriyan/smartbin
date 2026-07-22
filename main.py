@@ -41,6 +41,7 @@ def main() -> None:
         logger.info("Model weights: %s", config.model.weights)
         logger.info("Video source:  %s", config.camera.source)
         logger.info("Confidence:    %.2f", config.model.confidence_threshold)
+        logger.info("Hand tracking: %s (ROI crop: %s)", config.hand_tracking.enabled, config.hand_tracking.roi_crop_enabled)
         logger.info("Window size:   %d frames", config.buffer.active_window_size)
         logger.info("Idle timeout:  %d frames", config.buffer.idle_timeout_frames)
         logger.info("=" * 60)

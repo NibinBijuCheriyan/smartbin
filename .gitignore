@@ -26,3 +26,10 @@ Thumbs.db
 # Misc
 *.log
 decisions.jsonl
+
+# Models & Data
+*.pt
+*.avi
+data/
+cashcrow-classification-model/
+runs/
