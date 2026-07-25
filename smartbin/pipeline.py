@@ -61,8 +61,9 @@ class SmartbinPipeline:
         # Hand tracking component
         self._hand_tracker = None
         if config.hand_tracking.enabled:
-            from smartbin.hand_tracker import HandTracker
-            self._hand_tracker = HandTracker(
+            from smartbin.hand_tracker import create_hand_tracker
+            self._hand_tracker = create_hand_tracker(
+                backend=config.hand_tracking.backend,
                 confidence_threshold=config.hand_tracking.confidence_threshold,
                 max_distance_px=config.hand_tracking.max_hand_distance_px,
             )
@@ -87,6 +88,14 @@ class SmartbinPipeline:
 
         if config.logging.decision_log:
             hooks.append(JsonlFileHook(config.logging.decision_log))
+
+        if config.webhook.url:
+            from smartbin.decision import WebhookHook
+            hooks.append(WebhookHook(
+                url=config.webhook.url,
+                timeout=config.webhook.timeout,
+                max_retries=config.webhook.max_retries,
+            ))
 
         return hooks
 

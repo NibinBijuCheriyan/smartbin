@@ -10,6 +10,7 @@ build/
 
 # Virtual environments
 venv/
+.venv/
 .env/
 
 # IDE
@@ -27,9 +28,26 @@ Thumbs.db
 *.log
 decisions.jsonl
 
-# Models & Data
+# Models & weights — never commit large binary weights
 *.pt
-*.avi
-data/
-cashcrow-classification-model/
+*.onnx
+*.engine
+
+# Training artifacts
 runs/
+data/
+
+# Video files — use Git LFS if demo videos are intentional
+*.mp4
+*.avi
+*.webp
+
+# Benchmark outputs
+benchmark_report.md
+confusion_matrix.png
+
+# Previously committed files (ensure not re-added)
+22-17-04.mp4
+
+# Classification model artifacts
+cashcrow-classification-model/

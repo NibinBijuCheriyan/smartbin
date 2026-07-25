@@ -18,7 +18,7 @@ Smartbin is a computer vision pipeline designed to detect and classify waste ite
                                                │                                        ▼
                                                │                              ┌──────────────────┐
                                                └─────────────────────────────▶│  Decision Hooks  │
-                                                                              │  (JSONL + Logs)  │
+                                                                              │  (JSONL/Webhook) │
                                                                               └──────────────────┘
 ```
 
@@ -39,14 +39,18 @@ Smartbin is a computer vision pipeline designed to detect and classify waste ite
 - Sliding-window majority voting with per-track histories
 - YAML-based configuration with CLI overrides
 - JSONL structured output logging
+- **HTTP webhook hook** for real actuation/consumption (servo controllers, dashboards)
+- **MediaPipe hand tracking** (reliable across skin tones, lighting, and gloved hands)
+- **Model class validation** — refuses to run with COCO weights unless explicitly overridden
+- **Dry-run mode** — validate config and model without starting the camera loop
 - Tests runnable without GPU or camera
 
 ###  Known Limitations
-- **Generic YOLO model** — Uses COCO pretrained weights. Does not distinguish waste types (plastic, paper, metal, organic). Fine-tuned model required for real-world deployment.
+- **Dataset domain gap** — TrashNet (studio shots) and TACO (outdoor litter) do not resemble the deployment scene (hand holding item over a bin, indoor lighting, close range). **First-party Cashcrow bin images are required for deployment-quality accuracy.** See [Training](#training-a-waste-model).
 - **No TensorRT support yet** — Only Ultralytics YOLO via PyTorch. TensorRT stub present for future Jetson optimization.
 - **Limited edge testing** — Developed locally; not yet validated on actual Jetson hardware.
-- **No fine-tuned waste dataset** — COCO classes include "person", "backpack", etc. Not optimized for recycling/compost sorting.
-- **Minimal production hardening** — No cloud sync, MQTT actuation, or multi-bin orchestration.
+
+> **⚠️ IMPORTANT:** TrashNet and TACO alone are **not sufficient for deployment**. They serve as pretraining data only. You MUST collect and label images from your actual target camera/hardware for the model to work reliably in production.
 
 ---
 
@@ -59,12 +63,15 @@ smartbin/
 │   ├── trigger.py                  # Motion gate (frame differencing)
 │   ├── state_machine.py            # IDLE ↔ ACTIVE lifecycle + buffering
 │   ├── detector.py                 # YOLO + ByteTrack wrapper (abstracted)
+│   ├── hand_tracker.py             # Hand detection (MediaPipe / skin-color)
 │   ├── voter.py                    # Sliding-window majority vote
-│   ├── decision.py                 # Decision event dataclass + output hooks
+│   ├── decision.py                 # Decision event + hooks (JSONL, Webhook)
 │   └── pipeline.py                 # Orchestrator (thin wiring layer)
 ├── tests/                          # Test suite (runs offline)
 ├── config.yaml                     # Default configuration (all tunable)
 ├── main.py                         # CLI entry point
+├── train_waste_model.py            # Training pipeline (TrashNet + TACO + Cashcrow)
+├── benchmark_model.py              # Benchmarking + metrics report
 ├── requirements.txt                # Dependencies
 └── README.md
 ```
@@ -76,7 +83,7 @@ smartbin/
 3. **ACTIVE state (on trigger)** — YOLO detector runs on each frame. ByteTrack assigns/maintains object IDs.
 4. **State machine** buffers detections until window fills or no motion for N frames.
 5. **Voter** aggregates per-track class predictions via majority vote + consensus confidence.
-6. **Decision hooks** output to logging and JSONL, then return to IDLE.
+6. **Decision hooks** output to logging, JSONL, and optional HTTP webhook, then return to IDLE.
 
 ---
 
@@ -85,6 +92,7 @@ smartbin/
 ### Prerequisites
 - **Python 3.9+**
 - (Optional) NVIDIA GPU with CUDA for faster inference
+- (Optional) MediaPipe for ML-based hand tracking
 
 ### Installation
 
@@ -102,9 +110,15 @@ pip install -e ".[dev]"
 
 ### Model Weights
 
-The pipeline ships with **COCO-pretrained YOLO11-nano** by default. On first run, Ultralytics will auto-download `yolo11n.pt` (~13 MB) if not present.
+The pipeline requires **fine-tuned waste model weights** to classify waste correctly. COCO-pretrained weights (e.g., `yolo11n.pt`) will be rejected by default.
 
-**Warning:** COCO classes do not include waste categories. For real recycling/compost sorting, you must fine-tune a custom model.
+```bash
+# Train a waste model (see Training section below)
+python train_waste_model.py
+
+# Or use --allow-generic-model to run with COCO weights (for testing only)
+python main.py --allow-generic-model
+```
 
 ---
 
@@ -128,10 +142,10 @@ python main.py --source path/to/video.mp4 --show
 python main.py --weights best.pt --confidence 0.5 --show
 ```
 
-### Custom Config
+### Validate Config (Dry Run)
 
 ```bash
-python main.py --config my_config.yaml
+python main.py --dry-run
 ```
 
 ### All CLI Options
@@ -140,12 +154,143 @@ python main.py --config my_config.yaml
 |------|---------|-------------|
 | `--config` | `config.yaml` | Path to YAML config file |
 | `--source` | `0` (webcam) | Video source: integer for webcam ID, or file path |
-| `--weights` | `yolo11n.pt` | Path to YOLO model weights |
+| `--weights` | `best.pt` | Path to YOLO model weights |
 | `--confidence` | `0.25` | Detection confidence threshold (0–1) |
 | `--show` | off | Display annotated live preview window |
 | `--log-level` | `INFO` | Logging level: DEBUG, INFO, WARNING, ERROR |
+| `--dry-run` | off | Validate config and model, then exit |
+| `--allow-generic-model` | off | Allow running with COCO weights (not recommended) |
+| `--track-hands` | off | Enable hand tracking |
+| `--hand-roi` | off | Enable hand ROI cropping |
 
 CLI arguments **override** config file values.
+
+---
+
+## Training a Waste Model
+
+The training pipeline downloads TrashNet and TACO datasets and fine-tunes a YOLO model.
+
+```bash
+# Full training (downloads TrashNet + TACO, 50 epochs with early stopping)
+python train_waste_model.py
+
+# Quick test with synthetic data
+python train_waste_model.py --mock --epochs 2
+
+# Include first-party Cashcrow bin images (STRONGLY RECOMMENDED)
+python train_waste_model.py --cashcrow-data path/to/labeled/images
+
+# Allow training if only one data source succeeds
+python train_waste_model.py --allow-partial
+```
+
+### Training CLI Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--mock` | off | Use synthetic data (testing only) |
+| `--epochs` | `50` | Training epochs |
+| `--patience` | `10` | Early stopping patience |
+| `--imgsz` | `640` | Training image size |
+| `--device` | `auto` | Device: auto, cpu, cuda:0, mps |
+| `--cashcrow-data` | none | Path to first-party labeled images |
+| `--allow-partial` | off | Continue if one data source fails |
+| `--allow-sparse` | off | Allow under-represented classes |
+| `--trashnet-mode` | `grabcut` | TrashNet handling: grabcut, drop |
+
+### Dataset Domain Gap
+
+> **TrashNet** images are studio classification shots (one item on a plain background).
+> **TACO** images are outdoor litter in varied environments.
+>
+> Neither resembles the actual deployment scene: a hand holding an item over a bin, indoor lighting, close range. **First-party Cashcrow bin images are essential for deployment accuracy.**
+
+The training pipeline uses **GrabCut foreground segmentation** for TrashNet images instead of naive full-frame bounding boxes, which would train unrealistic box geometry.
+
+---
+
+## Benchmarking
+
+```bash
+# Basic benchmark
+python benchmark_model.py
+
+# With held-out real-world test set (RECOMMENDED)
+python benchmark_model.py --test-set path/to/test_data.yaml
+```
+
+The benchmark report clearly separates:
+- **In-distribution metrics** (training val split) — NOT a proxy for deployment accuracy
+- **Real-world metrics** (held-out test set) — actual deployment performance estimate
+- **Confusion matrix** — reveals systematic misclassifications (e.g., glass vs. plastic)
+
+---
+
+## Hand Tracking
+
+Two backends are available:
+
+### MediaPipe (Recommended)
+ML-based hand detection. Reliable across skin tones, lighting conditions, and gloved hands.
+
+```yaml
+hand_tracking:
+  enabled: true
+  backend: "mediapipe"
+```
+
+### Skin Color (Legacy Fallback)
+HSV/YCrCb skin-tone thresholding. Only for extremely constrained hardware.
+
+**Known failure modes:**
+- Unreliable across skin tones (tuned for a narrow band)
+- False positives on skin-colored objects (wood, cardboard, tan plastic)
+- Fails under non-standard lighting
+- Cannot detect gloved hands
+
+```yaml
+hand_tracking:
+  enabled: true
+  backend: "skin_color"
+```
+
+---
+
+## Decision Hooks
+
+### Built-in Hooks
+
+| Hook | Description |
+|------|-------------|
+| `LoggingHook` | Logs decisions at INFO level (always enabled) |
+| `JsonlFileHook` | Appends JSON lines to a file (configurable path) |
+| `WebhookHook` | POSTs decisions to an HTTP endpoint (configurable URL) |
+
+### Webhook Hook
+
+The webhook hook closes the loop from "classified item" to "physical or system action."
+
+```yaml
+webhook:
+  url: "http://localhost:8080/api/decision"
+  timeout: 5.0
+  max_retries: 3
+```
+
+**Contract:**
+- Each decision is POSTed individually as JSON.
+- Retries on transient failures with exponential backoff (1s, 2s, 4s).
+- Events are dropped after max retries (logged as error).
+- Runs in a background thread — never blocks the frame loop.
+- Best-effort delivery: pipeline continues regardless of webhook status.
+- Events are not re-sent after pipeline restart.
+
+### Example Webhook Payload
+
+```json
+{"track_id": 1, "item_class": "plastic", "confidence": 0.8823, "frame_count": 12, "total_frames": 15, "is_certain": true, "timestamp": "2026-07-15T16:52:00+00:00", "hand_id": 1, "is_held_by_hand": true}
+```
 
 ---
 
@@ -155,41 +300,16 @@ All tunable parameters live in [`config.yaml`](config.yaml). Key sections:
 
 | Section | Parameter | Default | Description |
 |---------|-----------|---------|-------------|
-| `model` | `weights` | `yolo11n.pt` | Model path (YOLO only, TensorRT stub present) |
+| `model` | `weights` | `best.pt` | Model path |
 | `model` | `confidence_threshold` | `0.25` | Min detection confidence |
 | `trigger` | `motion_threshold` | `25.0` | Pixel diff threshold (0–255) |
 | `trigger` | `area_fraction` | `0.005` | Frame area that must change to trigger |
-| `trigger` | `roi` | `null` | Optional region of interest [x1, y1, x2, y2] |
 | `buffer` | `active_window_size` | `30` | Max frames per detection window |
 | `buffer` | `idle_timeout_frames` | `8` | Empty frames before early finalization |
 | `buffer` | `min_frames_for_decision` | `5` | Min frames for valid vote |
 | `voter` | `min_consensus_ratio` | `0.4` | Min agreement ratio for "certain" |
-| `camera` | `fps_limit` | `15` | Max processing FPS |
-| `logging` | `level` | `INFO` | Log verbosity |
-| `logging` | `decision_log` | `decisions.jsonl` | Output JSONL path |
-
----
-
-## Decision Output
-
-Each finalized decision is:
-1. **Logged** at INFO level via Python's `logging` module.
-2. **Appended** as a JSON line to the configured JSONL file (default: `decisions.jsonl`).
-
-### Example JSONL Entry
-
-```json
-{"track_id": 1, "item_class": "backpack", "confidence": 0.8823, "frame_count": 12, "total_frames": 15, "is_certain": true, "timestamp": "2026-07-15T16:52:00+00:00"}
-```
-
-Fields:
-- `track_id` — Unique ID for this tracked object (ByteTrack)
-- `item_class` — Winning class from majority vote (e.g., "person", "backpack", "bottle")
-- `confidence` — Mean confidence of frames that predicted the winning class
-- `frame_count` — Frames that voted for the winning class
-- `total_frames` — Total frames this track was observed
-- `is_certain` — True if `frame_count / total_frames >= min_consensus_ratio`
-- `timestamp` — ISO 8601 decision timestamp
+| `hand_tracking` | `backend` | `mediapipe` | Hand detection backend |
+| `webhook` | `url` | `null` | Webhook endpoint (null = disabled) |
 
 ---
 
@@ -201,62 +321,27 @@ python -m pytest tests/ -v
 
 # Run with coverage
 python -m pytest tests/ -v --cov=smartbin --cov-report=term-missing
+
+# Lint check
+ruff check smartbin/ tests/
 ```
 
 Tests are designed to run **offline** — they mock the detector and don't require video input or GPU.
 
 ---
 
-## Customization & Extension
+## Dependencies
 
-### Fine-Tuning a Waste Model
-
-To deploy with custom waste classes (plastic, paper, metal, glass, organic):
-
-1. **Collect & label** waste images (or use an existing dataset like TACO).
-2. **Train** a custom YOLO model:
-   ```bash
-   yolo detect train data=path/to/dataset.yaml epochs=100 imgsz=640
-   ```
-3. **Export** the best weights:
-   ```bash
-   cp runs/detect/train/weights/best.pt path/to/best.pt
-   ```
-4. **Update** `config.yaml`:
-   ```yaml
-   model:
-     weights: "path/to/best.pt"
-   ```
-   Or pass via CLI: `python main.py --weights path/to/best.pt`
-
-**No other pipeline code changes needed.** The detector reads class names directly from the model.
-
-### TensorRT Deployment (Jetson) — Future
-
-The detector layer is abstracted behind `BaseDetector`. To enable TensorRT:
-
-1. **Export** YOLO to TensorRT:
-   ```bash
-   yolo export model=best.pt format=engine device=0
-   ```
-2. **Implement** `TensorRTDetector` in `smartbin/detector.py` (stub at line 213).
-3. **Update** the `create_detector()` factory to route `.engine` files.
-
-**Key principle:** Only `detector.py` changes. Trigger, state machine, voter, and hooks remain untouched.
-
----
-
-## Planned Enhancements
-
-> These are aspirational extensions — hooks and stubs are already in the code.
-
-- [ ] **TensorRT export & runtime** — Implement `TensorRTDetector` for Jetson Orin Nano. Use FP16 for optimal throughput.
-- [ ] **Hand-detection-based triggering** — Train a lightweight hand detector to trigger more precisely (vs. generic motion). Reduces false positives from shadows/lighting changes.
-- [ ] **Hardware sensor triggers** — Integrate IR proximity or weight sensors (subclass `BaseTrigger`).
-- [ ] **Cloud/dashboard logging** — Implement `CloudSyncHook` to batch-upload decisions for analytics.
-- [ ] **MQTT bin actuation** — Implement `MqttHook` to publish decisions to MQTT broker for physical sorting.
-- [ ] **Cross-session deduplication** — Detect when the same item is presented multiple times across IDLE↔ACTIVE cycles.
-- [ ] **DeepStream integration** — For multi-camera setups on hardware-accelerated video decoding.
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `ultralytics` | ≥8.0 | YOLO detection & tracking |
+| `opencv-python` | ≥4.8 | Frame capture & display |
+| `pyyaml` | ≥6.0 | Config loading |
+| `numpy` | ≥1.24 | Numerical operations |
+| `mediapipe` | ≥0.10 | Hand tracking (MediaPipe backend) |
+| `pytest` | ≥7.0 | Testing (dev only) |
+| `pytest-cov` | ≥4.0 | Coverage reporting (dev only) |
+| `ruff` | ≥0.4 | Linting (dev only) |
 
 ---
 
@@ -270,49 +355,24 @@ On Windows, the default MSMF backend sometimes fails for webcams. The pipeline a
 python main.py --source 1  # Try different camera index
 ```
 
+### Model Class Validation Failure
+
+If you see "MODEL CLASS MISMATCH DETECTED", your weights contain COCO classes instead of waste classes. Train a custom model:
+
+```bash
+python train_waste_model.py
+```
+
+Or override for testing: `python main.py --allow-generic-model`
+
 ### GPU Not Detected
 
-Set the device explicitly:
+Set the device explicitly in config.yaml:
 
-```bash
-python main.py --device cuda:0  # or "cpu" to force CPU inference
+```yaml
+model:
+  device: "cuda:0"  # or "cpu"
 ```
-
-### Model Download Hangs
-
-If `yolo11n.pt` download stalls, download manually:
-
-```python
-from ultralytics import YOLO
-model = YOLO("yolo11n.pt")
-```
-
-Or pre-download via CLI:
-```bash
-yolo detect predict model=yolo11n.pt source="test.jpg"
-```
-
----
-
-## Questions to Explore
-
-- **How do I fine-tune the model for plastic/paper/metal/glass waste?** See [Fine-Tuning a Waste Model](#fine-tuning-a-waste-model).
-- **What's the latency on a Jetson Orin Nano?** Not yet tested. TensorRT implementation will help. Contribute results!
-- **How do I add a weight sensor as a trigger?** Subclass `BaseTrigger` in `smartbin/trigger.py` and set `config.trigger.method`.
-- **Can I run on multiple cameras?** Not yet. DeepStream integration (planned) would enable this.
-
----
-
-## Dependencies
-
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `ultralytics` | ≥8.0 | YOLO detection & tracking |
-| `opencv-python` | ≥4.8 | Frame capture & display |
-| `pyyaml` | ≥6.0 | Config loading |
-| `numpy` | ≥1.24 | Numerical operations |
-| `pytest` | ≥7.0 | Testing (dev only) |
-| `pytest-cov` | ≥4.0 | Coverage reporting (dev only) |
 
 ---
 
@@ -320,8 +380,9 @@ yolo detect predict model=yolo11n.pt source="test.jpg"
 
 This is an **experimental prototype**. Contributions welcome, especially:
 - **Edge hardware testing** — Jetson Orin Nano latency, memory usage
+- **First-party bin images** — Labeled waste images from the target camera/hardware
 - **Fine-tuned waste models** — Custom YOLO training on recycling/compost datasets
-- **TensorRT implementation** — See stub at `smartbin/detector.py:213`
+- **TensorRT implementation** — See stub at `smartbin/detector.py`
 - **Test coverage** — More edge cases, integration tests with real video
 
 ---
@@ -336,4 +397,4 @@ Proprietary — Cashcrow Technologies.
 
 Built as an internship prototype. Questions or ideas? Open an issue or reach out to the maintainer.
 
-**Happy detecting! **
+**Happy detecting! 🚀**

@@ -105,7 +105,7 @@ class FrameDiffTrigger(BaseTrigger):
         changed_mask = diff > self._threshold
         changed_fraction = np.count_nonzero(changed_mask) / changed_mask.size
 
-        triggered = changed_fraction > self._area_fraction
+        triggered = bool(changed_fraction > self._area_fraction)
 
         if triggered:
             logger.debug(

@@ -3,7 +3,9 @@ ultralytics>=8.0
 opencv-python>=4.8
 pyyaml>=6.0
 numpy>=1.24
+mediapipe>=0.10
 
 # Dev / test dependencies
 pytest>=7.0
 pytest-cov>=4.0
+ruff>=0.4

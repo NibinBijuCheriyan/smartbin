@@ -16,7 +16,7 @@ import os
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +149,149 @@ class JsonlFileHook(DecisionHook):
 
 
 # ---------------------------------------------------------------------------
+# HTTP Webhook hook — real actuation endpoint
+# ---------------------------------------------------------------------------
+
+
+class WebhookHook(DecisionHook):
+    """
+    POST each DecisionEvent as JSON to an HTTP webhook endpoint.
+
+    This closes the loop from "classified item" to "physical or system action"
+    — the webhook can trigger a servo/flap controller, update a dashboard, or
+    feed into a rewards system.
+
+    **Hook Contract:**
+
+    - Each decision is POSTed individually as JSON to the configured URL.
+    - On transient failures (connection error, timeout, HTTP 5xx), the hook
+      retries up to `max_retries` times with exponential backoff (1s, 2s, 4s).
+    - After exhausting retries, the event is **dropped** and an error is logged.
+      Events are NOT queued for re-delivery after pipeline restart.
+    - The hook runs delivery in a background thread to avoid blocking the
+      frame processing loop. A bounded queue prevents memory exhaustion.
+    - The hook is **best-effort**: the pipeline continues processing
+      regardless of webhook success or failure.
+    - Duplicate delivery is possible if the remote server accepts the POST
+      but the response is lost (at-least-once semantics when retries fire).
+
+    Args:
+        url: HTTP(S) endpoint to POST decisions to.
+        timeout: Request timeout in seconds.
+        max_retries: Maximum retry attempts on transient failures.
+        max_queue_size: Maximum pending events in the delivery queue.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        timeout: float = 5.0,
+        max_retries: int = 3,
+        max_queue_size: int = 100,
+    ) -> None:
+        import queue
+        import threading
+
+        self._url = url
+        self._timeout = timeout
+        self._max_retries = max_retries
+
+        self._queue: queue.Queue = queue.Queue(maxsize=max_queue_size)
+        self._shutdown = threading.Event()
+        self._worker = threading.Thread(
+            target=self._delivery_loop, daemon=True, name="webhook-hook"
+        )
+        self._worker.start()
+        logger.info("WebhookHook initialized: %s (timeout=%.1fs, retries=%d)",
+                     url, timeout, max_retries)
+
+    def on_decision(self, event: DecisionEvent) -> None:
+        """Queue a decision for async delivery. Drops if queue is full."""
+        try:
+            self._queue.put_nowait(event)
+        except Exception:
+            logger.warning(
+                "WebhookHook queue full — dropping decision for track %d",
+                event.track_id,
+            )
+
+    def _delivery_loop(self) -> None:
+        """Background thread: drain queue and POST events."""
+        import time
+
+        while not self._shutdown.is_set():
+            try:
+                event = self._queue.get(timeout=0.5)
+            except Exception:
+                continue
+
+            self._deliver_with_retry(event)
+            self._queue.task_done()
+
+    def _deliver_with_retry(self, event: DecisionEvent) -> None:
+        """POST a single event with exponential backoff retry."""
+        import time
+        import urllib.request
+        import urllib.error
+
+        payload = event.to_json().encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+
+        for attempt in range(self._max_retries + 1):
+            try:
+                req = urllib.request.Request(
+                    self._url,
+                    data=payload,
+                    headers=headers,
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                    status = resp.getcode()
+                    if 200 <= status < 300:
+                        logger.debug(
+                            "WebhookHook delivered track=%d (%d)",
+                            event.track_id, status,
+                        )
+                        return
+                    elif status >= 500:
+                        # Server error — retry
+                        raise urllib.error.HTTPError(
+                            self._url, status, "Server error", {}, None
+                        )
+                    else:
+                        # Client error (4xx) — don't retry
+                        logger.error(
+                            "WebhookHook: HTTP %d for track=%d — not retrying",
+                            status, event.track_id,
+                        )
+                        return
+
+            except (urllib.error.URLError, OSError, urllib.error.HTTPError) as e:
+                if attempt < self._max_retries:
+                    backoff = 2 ** attempt  # 1s, 2s, 4s
+                    logger.warning(
+                        "WebhookHook: attempt %d/%d failed for track=%d: %s "
+                        "(retrying in %ds)",
+                        attempt + 1, self._max_retries + 1,
+                        event.track_id, e, backoff,
+                    )
+                    time.sleep(backoff)
+                else:
+                    logger.error(
+                        "WebhookHook: all %d attempts failed for track=%d: %s "
+                        "— event dropped",
+                        self._max_retries + 1, event.track_id, e,
+                    )
+
+    def close(self) -> None:
+        """Shutdown the delivery thread and drain remaining events."""
+        self._shutdown.set()
+        if self._worker.is_alive():
+            self._worker.join(timeout=10)
+        logger.info("WebhookHook shut down.")
+
+
+# ---------------------------------------------------------------------------
 # Future hook stubs — extension points for downstream integration
 # ---------------------------------------------------------------------------
 
@@ -162,3 +305,4 @@ class JsonlFileHook(DecisionHook):
 #   class CloudSyncHook(DecisionHook):
 #       def __init__(self, endpoint: str, api_key: str): ...
 #       def on_batch(self, events): requests.post(endpoint, json=[...])
+

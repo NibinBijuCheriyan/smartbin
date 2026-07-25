@@ -8,7 +8,7 @@
 model:
   # Path to YOLO weights. Replace with fine-tuned waste model when available.
   # Accepts any Ultralytics-compatible format: .pt, .onnx, .engine (TensorRT).
-  weights: "yolo11n.pt"
+  weights: "best.pt"
 
   # Minimum detection confidence. Detections below this are discarded before
   # they enter the tracking/voting pipeline.
@@ -17,6 +17,23 @@ model:
   # Inference device. "auto" lets Ultralytics pick (CUDA if available, else CPU).
   # Explicit options: "cpu", "cuda:0", "0" (GPU index).
   device: "auto"
+
+  # Only these model classes are allowed into tracking/voting. This prevents
+  # generic COCO outputs like "person" from becoming bin decisions.
+  allowed_classes:
+    - plastic
+    - paper
+    - metal
+    - glass
+    - e-waste
+    - organic
+    - other
+
+  # Lightweight geometry filters for obvious false positives.
+  min_box_area_fraction: 0.0005
+  max_box_area_fraction: 0.75
+  min_box_aspect_ratio: 0.1
+  max_box_aspect_ratio: 10.0
 
 trigger:
   # Trigger method. Only "frame_diff" is implemented; future options include
@@ -96,6 +113,11 @@ hand_tracking:
   # Enable hand detection & tracking to associate waste objects with hands
   enabled: true
 
+  # Hand detection backend:
+  #   "mediapipe" — ML-based, reliable across skin tones & lighting (recommended)
+  #   "skin_color" — HSV/YCrCb thresholding, lightweight but unreliable (see docs)
+  backend: "mediapipe"
+
   # Minimum hand detection confidence
   confidence_threshold: 0.3
 
@@ -108,3 +130,15 @@ hand_tracking:
   # Whether to crop frame around hand ROI to increase inference speed/FPS
   roi_crop_enabled: true
 
+webhook:
+  # HTTP webhook endpoint for decision actuation. Set to a URL to enable.
+  # Each decision is POSTed as JSON. Set to null to disable.
+  # Example: "http://localhost:8080/api/decision"
+  url: null
+
+  # Request timeout in seconds
+  timeout: 5.0
+
+  # Max retry attempts on transient failures (exponential backoff: 1s, 2s, 4s)
+  # After exhausting retries, the event is dropped (best-effort delivery).
+  max_retries: 3

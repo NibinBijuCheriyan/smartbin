@@ -28,6 +28,11 @@ class ModelConfig:
     weights: str = "yolo11n.pt"
     confidence_threshold: float = 0.25
     device: str = "auto"
+    allowed_classes: Optional[List[str]] = None
+    min_box_area_fraction: float = 0.0005
+    max_box_area_fraction: float = 0.75
+    min_box_aspect_ratio: float = 0.1
+    max_box_aspect_ratio: float = 10.0
 
 
 @dataclass(frozen=True)
@@ -79,10 +84,19 @@ class DisplayConfig:
 @dataclass(frozen=True)
 class HandTrackingConfig:
     enabled: bool = False
+    backend: str = "mediapipe"  # "mediapipe" (recommended) or "skin_color" (legacy)
     confidence_threshold: float = 0.3
     max_hand_distance_px: float = 150.0
     roi_padding_factor: float = 1.4
     roi_crop_enabled: bool = True
+
+
+@dataclass(frozen=True)
+class WebhookConfig:
+    """Configuration for the HTTP webhook decision hook."""
+    url: Optional[str] = None  # None = webhook disabled
+    timeout: float = 5.0
+    max_retries: int = 3
 
 
 @dataclass(frozen=True)
@@ -98,6 +112,11 @@ class SmartbinConfig:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     display: DisplayConfig = field(default_factory=DisplayConfig)
     hand_tracking: HandTrackingConfig = field(default_factory=HandTrackingConfig)
+    webhook: WebhookConfig = field(default_factory=WebhookConfig)
+
+    # CLI-only flags (not in YAML config)
+    dry_run: bool = False
+    allow_generic_model: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +162,7 @@ def load_config_from_yaml(path: Union[str, Path]) -> SmartbinConfig:
         logging=_build_section(LoggingConfig, raw, "logging"),
         display=_build_section(DisplayConfig, raw, "display"),
         hand_tracking=_build_section(HandTrackingConfig, raw, "hand_tracking"),
+        webhook=_build_section(WebhookConfig, raw, "webhook"),
     )
 
 
@@ -206,6 +226,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Logging level (overrides config)",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Validate config and model weights, then exit without starting the camera loop",
+    )
+    parser.add_argument(
+        "--allow-generic-model",
+        action="store_true",
+        default=False,
+        help="Allow running with generic (COCO) weights instead of a fine-tuned waste model",
+    )
     return parser
 
 
@@ -265,6 +297,11 @@ def load_config(argv: Optional[list] = None) -> SmartbinConfig:
             weights=model_weights,
             confidence_threshold=model_conf,
             device=cfg.model.device,
+            allowed_classes=cfg.model.allowed_classes,
+            min_box_area_fraction=cfg.model.min_box_area_fraction,
+            max_box_area_fraction=cfg.model.max_box_area_fraction,
+            min_box_aspect_ratio=cfg.model.min_box_aspect_ratio,
+            max_box_aspect_ratio=cfg.model.max_box_aspect_ratio,
         ),
         trigger=cfg.trigger,
         buffer=cfg.buffer,
@@ -278,6 +315,9 @@ def load_config(argv: Optional[list] = None) -> SmartbinConfig:
         ),
         display=DisplayConfig(show=show),
         hand_tracking=ht_cfg,
+        webhook=cfg.webhook,
+        dry_run=args.dry_run,
+        allow_generic_model=args.allow_generic_model,
     )
 
     return cfg

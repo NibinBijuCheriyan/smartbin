@@ -16,7 +16,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -101,6 +101,11 @@ class YOLODetector(BaseDetector):
         self._model = None
         self._model_config = model_config
         self._tracker_config = tracker_config
+        self._allowed_classes = (
+            {name.lower() for name in model_config.allowed_classes}
+            if model_config.allowed_classes
+            else None
+        )
 
         # Lazy loading — model is loaded on first detect() call.
         # This allows tests to instantiate the detector without needing
@@ -208,9 +213,41 @@ class YOLODetector(BaseDetector):
                 confidence=float(confs[i]),
                 bbox=full_box,
             )
-            detections.append(det)
+            if self._is_valid_detection(det, frame.shape):
+                detections.append(det)
 
         return detections
+
+    def _is_valid_detection(
+        self,
+        det: Detection,
+        frame_shape: Tuple[int, int, int],
+    ) -> bool:
+        """Filter non-waste classes and implausible boxes before voting."""
+        class_name = det.class_name.lower()
+        if self._allowed_classes is not None and class_name not in self._allowed_classes:
+            logger.debug("Dropping class outside allowlist: %s", det.class_name)
+            return False
+
+        frame_h, frame_w = frame_shape[:2]
+        x1, y1, x2, y2 = det.bbox
+        box_w = max(0.0, x2 - x1)
+        box_h = max(0.0, y2 - y1)
+        if box_w <= 0.0 or box_h <= 0.0:
+            return False
+
+        area_fraction = (box_w * box_h) / float(frame_w * frame_h)
+        if area_fraction < self._model_config.min_box_area_fraction:
+            return False
+        if area_fraction > self._model_config.max_box_area_fraction:
+            return False
+
+        aspect_ratio = box_w / box_h
+        return (
+            self._model_config.min_box_aspect_ratio
+            <= aspect_ratio
+            <= self._model_config.max_box_aspect_ratio
+        )
 
     def reset_tracker(self) -> None:
         """
