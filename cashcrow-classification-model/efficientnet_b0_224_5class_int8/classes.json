@@ -1,0 +1,23 @@
+{
+  "class_names": [
+    "plastic",
+    "paper",
+    "metal",
+    "organic_waste",
+    "none"
+  ],
+  "class_to_idx": {
+    "plastic": 0,
+    "paper": 1,
+    "metal": 2,
+    "organic_waste": 3,
+    "none": 4
+  },
+  "idx_to_class": {
+    "0": "plastic",
+    "1": "paper",
+    "2": "metal",
+    "3": "organic_waste",
+    "4": "none"
+  }
+}

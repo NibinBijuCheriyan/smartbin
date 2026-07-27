@@ -1,122 +1,177 @@
 """
-Evaluate the Cashcrow EfficientNet-B0 FP32 Classifier on real SmartBin crops.
+Evaluate the Cashcrow EfficientNet-B0 Waste Classifier on Ground-Truth Crops.
 
-Extracts crops from the sample test video (22-17-04.mp4) under realistic hand-held /
-bin capture conditions, runs inference using waste_classifier_fp32.tflite, and evaluates
-performance against the studio validation benchmark (96.59%).
+Loads labeled waste crops (or samples from real datasets / video detections),
+runs inference using WasteClassifier (TFLite FP32), and computes true measured
+accuracy, recall, precision, and F1-score.
+
+Usage:
+    python evaluate_smartbin_crops.py [--dataset-dir PATH]
 """
 
 from __future__ import annotations
 
+import argparse
 import logging
-import os
-import sys
 from pathlib import Path
+from typing import Dict, List, Tuple
+
 import cv2
 import numpy as np
 
 from smartbin.config import RefinerConfig
 from smartbin.refiner import WasteClassifier
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+# Category mapping from dataset folders to EfficientNet-B0 target 5 classes:
+# plastic, paper, metal, organic_waste, none
+DATASET_CLASS_MAP = {
+    "plastic": "plastic",
+    "paper": "paper",
+    "cardboard": "paper",
+    "metal": "metal",
+    "trash": "organic_waste",
+    "organic": "organic_waste",
+    "none": "none",
+}
 
-def evaluate_video_crops(video_path: str, model_path: str, classes_path: str):
-    """Extract frames/crops from video and run TFLite classification evaluation."""
-    if not Path(video_path).exists():
-        logger.error("Video file not found: %s", video_path)
+
+def load_ground_truth_crops(dataset_dir: Path, samples_per_class: int = 20) -> List[Tuple[np.ndarray, str]]:
+    """Load images with known ground-truth class labels from dataset subdirectories."""
+    crops_and_labels: List[Tuple[np.ndarray, str]] = []
+
+    if not dataset_dir.exists():
+        logger.warning("Dataset directory not found: %s", dataset_dir)
+        return crops_and_labels
+
+    for folder_name, target_class in DATASET_CLASS_MAP.items():
+        class_folder = dataset_dir / folder_name
+        if not class_folder.is_dir():
+            continue
+
+        image_files = list(class_folder.glob("*.jpg")) + list(class_folder.glob("*.png"))
+        sampled_files = image_files[:samples_per_class]
+
+        for img_path in sampled_files:
+            crop = cv2.imread(str(img_path))
+            if crop is not None and crop.size > 0:
+                crops_and_labels.append((crop, target_class))
+
+    logger.info("Loaded %d ground-truth crop samples across dataset categories.", len(crops_and_labels))
+    return crops_and_labels
+
+
+def evaluate_classifier(
+    crops_and_labels: List[Tuple[np.ndarray, str]],
+    model_path: str,
+    classes_path: str,
+    confidence_threshold: float = 0.25,
+) -> Dict[str, float]:
+    """Run WasteClassifier inference on crops and compute accuracy, recall, precision, and F1."""
+    classifier = WasteClassifier(
+        model_path=model_path,
+        classes_path=classes_path,
+        confidence_threshold=confidence_threshold,
+    )
+
+    correct = 0
+    total = len(crops_and_labels)
+
+    class_stats: Dict[str, Dict[str, int]] = {}
+
+    for crop, true_label in crops_and_labels:
+        pred_label, conf, _ = classifier.classify(crop)
+
+        if true_label not in class_stats:
+            class_stats[true_label] = {"tp": 0, "fp": 0, "fn": 0, "total": 0}
+        if pred_label not in class_stats:
+            class_stats[pred_label] = {"tp": 0, "fp": 0, "fn": 0, "total": 0}
+
+        class_stats[true_label]["total"] += 1
+
+        if pred_label == true_label:
+            correct += 1
+            class_stats[true_label]["tp"] += 1
+        else:
+            class_stats[true_label]["fn"] += 1
+            class_stats[pred_label]["fp"] += 1
+
+    accuracy = (correct / total * 100.0) if total > 0 else 0.0
+
+    print("\n==========================================================================")
+    print("           SMARTBIN REFINER GROUND-TRUTH CROP EVALUATION REPORT           ")
+    print("==========================================================================")
+    print(f"Total Evaluated Crops : {total}")
+    print(f"Top-1 Accuracy        : {accuracy:.2f}%\n")
+
+    print(f"{'Class Name':<15} | {'Count':<7} | {'Precision':<10} | {'Recall':<10} | {'F1-Score':<10}")
+    print("-" * 65)
+
+    recalls, precisions, f1s = [], [], []
+
+    for cls_name, stats in sorted(class_stats.items()):
+        if stats["total"] == 0 and stats["fp"] == 0:
+            continue
+        tp, fp, fn = stats["tp"], stats["fp"], stats["fn"]
+        prec = (tp / (tp + fp)) if (tp + fp) > 0 else 0.0
+        rec = (tp / (tp + fn)) if (tp + fn) > 0 else 0.0
+        f1 = (2 * prec * rec / (prec + rec)) if (prec + rec) > 0 else 0.0
+
+        precisions.append(prec)
+        recalls.append(rec)
+        f1s.append(f1)
+
+        print(f"{cls_name:<15} | {stats['total']:<7} | {prec*100:>9.2f}% | {rec*100:>9.2f}% | {f1*100:>9.2f}%")
+
+    macro_prec = (np.mean(precisions) * 100.0) if precisions else 0.0
+    macro_rec = (np.mean(recalls) * 100.0) if recalls else 0.0
+    macro_f1 = (np.mean(f1s) * 100.0) if f1s else 0.0
+
+    print("-" * 65)
+    print(f"Macro Precision       : {macro_prec:.2f}%")
+    print(f"Macro Recall          : {macro_rec:.2f}%")
+    print(f"Macro F1-Score        : {macro_f1:.2f}%")
+    print("==========================================================================\n")
+
+    return {
+        "accuracy": accuracy,
+        "macro_precision": macro_prec,
+        "macro_recall": macro_rec,
+        "macro_f1": macro_f1,
+        "total_crops": total,
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Evaluate WasteClassifier on ground-truth crops.")
+    parser.add_argument(
+        "--dataset-dir",
+        default="data/trashnet_extracted/dataset-resized",
+        help="Path to labeled dataset directory containing class subfolders.",
+    )
+    parser.add_argument(
+        "--model-path",
+        default="cashcrow-classification-model/efficientnet_b0_224_5class_int8/models/waste_classifier_fp32.tflite",
+        help="Path to TFLite model.",
+    )
+    parser.add_argument(
+        "--classes-path",
+        default="cashcrow-classification-model/efficientnet_b0_224_5class_int8/classes.json",
+        help="Path to classes.json.",
+    )
+    args = parser.parse_args()
+
+    dataset_path = Path(args.dataset_dir)
+    crops_and_labels = load_ground_truth_crops(dataset_path, samples_per_class=25)
+
+    if not crops_and_labels:
+        logger.error("No valid crop samples loaded for evaluation. Check dataset directory.")
         return
 
-    classifier = WasteClassifier(model_path=model_path, classes_path=classes_path)
-
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        logger.error("Failed to open video: %s", video_path)
-        return
-
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-    logger.info("Opened video %s: %d frames @ %d FPS", video_path, total_frames, fps)
-
-    frame_idx = 0
-    sampled_crops = 0
-    predictions_summary = []
-
-    # Simple motion / foreground crop simulation for evaluating real crops
-    back_sub = cv2.createBackgroundSubtractorMOG2(history=100, varThreshold=50, detectShadows=False)
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        frame_idx += 1
-        fg_mask = back_sub.apply(frame)
-
-        # Sample every 10th frame when motion is detected
-        if frame_idx % 10 == 0:
-            contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-            large_contours = [c for c in contours if cv2.contourArea(c) > 5000]
-
-            if large_contours:
-                # Get bounding box of largest motion region (simulating item/hand)
-                c = max(large_contours, key=cv2.contourArea)
-                x, y, w, h = cv2.boundingRect(c)
-
-                # Add padding
-                pad_x = int(w * 0.2)
-                pad_y = int(h * 0.2)
-                x1 = max(0, x - pad_x)
-                y1 = max(0, y - pad_y)
-                x2 = min(frame.shape[1], x + w + pad_x)
-                y2 = min(frame.shape[0], y + h + pad_y)
-
-                crop = frame[y1:y2, x1:x2]
-                if crop.size > 0:
-                    predicted_class, confidence = classifier.classify(crop)
-                    sampled_crops += 1
-                    predictions_summary.append({
-                        "frame": frame_idx,
-                        "class": predicted_class,
-                        "confidence": confidence,
-                        "crop_size": (w, h),
-                    })
-
-    cap.release()
-
-    print("\n" + "=" * 70)
-    print("      SMARTBIN REAL-CROP EFFICIENTNET-B0 CLASSIFIER EVALUATION REPORT")
-    print("=" * 70)
-    print(f"Test Video Source: {os.path.basename(video_path)}")
-    print(f"Total Video Frames Processed: {frame_idx}")
-    print(f"Total SmartBin Motion Crops Evaluated: {sampled_crops}")
-    print("-" * 70)
-
-    if predictions_summary:
-        from collections import Counter
-        class_counts = Counter(p["class"] for p in predictions_summary)
-        mean_conf = np.mean([p["confidence"] for p in predictions_summary])
-
-        print("\nPredicted Class Distribution on Real Crops:")
-        for cls_name, count in class_counts.items():
-            pct = (count / sampled_crops) * 100
-            print(f"  - {cls_name:<15}: {count:>3} crops ({pct:>5.1f}%)")
-
-        print(f"\nMean Classifier Confidence across Crops: {mean_conf * 100:.2f}%")
-        print("\nDistribution Analysis vs. Studio Validation:")
-        print("  - Studio Dataset Accuracy (README) : 96.59% (FP32)")
-        print("  - Deployment Scene Domain Gap      : High (cluttered background, hand occlusion, non-studio lighting)")
-        print("  - Disagreement / 'None' Frequency  : {:.1f}% of crops classified as 'none'".format(
-            (class_counts.get("none", 0) / sampled_crops) * 100
-        ))
-    print("=" * 70 + "\n")
+    evaluate_classifier(crops_and_labels, args.model_path, args.classes_path)
 
 
 if __name__ == "__main__":
-    video = "22-17-04.mp4"
-    model = "cashcrow-classification-model/efficientnet_b0_224_5class_int8/models/waste_classifier_fp32.tflite"
-    classes = "cashcrow-classification-model/efficientnet_b0_224_5class_int8/classes.json"
-
-    evaluate_video_crops(video, model, classes)
+    main()

@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
+from PIL import Image
 
 from smartbin.config import RefinerConfig
 
@@ -48,35 +48,34 @@ class WasteClassifier:
         self._interpreter = interpreter
         self._classes: List[str] = []
         self._idx_to_class: dict[str, str] = {}
+        self._class_to_idx: dict[str, int] = {}
 
         self._load_classes()
 
     def _load_classes(self) -> None:
         """Load class index mapping from classes.json."""
         if not self.classes_path.exists():
-            logger.warning("Classes file not found at %s", self.classes_path)
-            # Default 5 classes if file missing
-            self._classes = ["plastic", "paper", "metal", "organic_waste", "none"]
-            self._idx_to_class = {str(i): cls for i, cls in enumerate(self._classes)}
-            return
+            raise FileNotFoundError(f"Classes configuration file not found at {self.classes_path}")
 
-        try:
-            with open(self.classes_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+        with open(self.classes_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
 
-            if "idx_to_class" in data:
-                self._idx_to_class = {str(k): str(v) for k, v in data["idx_to_class"].items()}
-                self._classes = [self._idx_to_class.get(str(i), "") for i in range(len(self._idx_to_class))]
-            elif "class_names" in data:
-                self._classes = data["class_names"]
-                self._idx_to_class = {str(i): name for i, name in enumerate(self._classes)}
-        except Exception as e:
-            logger.error("Failed to load classes from %s: %s", self.classes_path, e)
-            self._classes = ["plastic", "paper", "metal", "organic_waste", "none"]
-            self._idx_to_class = {str(i): cls for i, cls in enumerate(self._classes)}
+        if "idx_to_class" in data:
+            self._idx_to_class = {str(k): str(v) for k, v in data["idx_to_class"].items()}
+            self._classes = [self._idx_to_class.get(str(i), "") for i in range(len(self._idx_to_class))]
+            if "class_to_idx" in data:
+                self._class_to_idx = {str(k): int(v) for k, v in data["class_to_idx"].items()}
+            else:
+                self._class_to_idx = {name: int(idx) for idx, name in self._idx_to_class.items()}
+        elif "class_names" in data:
+            self._classes = data["class_names"]
+            self._idx_to_class = {str(i): name for i, name in enumerate(self._classes)}
+            self._class_to_idx = {name: i for i, name in enumerate(self._classes)}
+        else:
+            raise ValueError(f"Invalid classes format in {self.classes_path}")
 
     def _ensure_loaded(self) -> None:
-        """Lazy-load the TFLite interpreter."""
+        """Eagerly load the TFLite interpreter and allocate tensors."""
         if self._interpreter is not None:
             return
 
@@ -105,10 +104,10 @@ class WasteClassifier:
 
     def preprocess(self, crop: np.ndarray, target_size: Tuple[int, int] = (224, 224)) -> np.ndarray:
         """
-        Preprocess BGR/RGB image crop for EfficientNet-B0.
+        Preprocess BGR image crop for EfficientNet-B0 matching inference/predict.py verbatim.
 
-        Resizes to target size (224, 224) using bilinear interpolation,
-        converts to float32 numpy array, and adds batch dimension.
+        Converts BGR to RGB, wraps with PIL Image, resizes to (224, 224) using BILINEAR
+        interpolation, converts to float32 numpy array, and adds batch dimension (1, 224, 224, 3).
         """
         if crop is None or crop.size == 0:
             raise ValueError("Crop image is empty or None")
@@ -119,14 +118,14 @@ class WasteClassifier:
         else:
             crop_rgb = crop
 
-        # Resize to 224x224 (bilinear)
-        resized = cv2.resize(crop_rgb, target_size, interpolation=cv2.INTER_LINEAR)
-        img_array = np.array(resized, dtype=np.float32)
-        # Expand dimensions to (1, 224, 224, 3)
+        img = Image.fromarray(crop_rgb)
+        img = img.convert("RGB")
+        img = img.resize(target_size, Image.Resampling.BILINEAR)
+        img_array = np.array(img, dtype=np.float32)
         img_array = np.expand_dims(img_array, axis=0)
         return img_array
 
-    def classify(self, crop: np.ndarray) -> Tuple[str, float]:
+    def classify(self, crop: np.ndarray) -> Tuple[str, float, int]:
         """
         Classify a single image crop.
 
@@ -134,10 +133,11 @@ class WasteClassifier:
             crop: BGR image crop (np.ndarray).
 
         Returns:
-            Tuple of (predicted_class_name, confidence_float).
+            Tuple of (predicted_class_name, confidence_float, predicted_class_id).
+            If confidence < confidence_threshold, returns ("none", confidence, -1).
         """
         if crop is None or crop.size == 0:
-            return ("none", 0.0)
+            return ("none", 0.0, -1)
 
         self._ensure_loaded()
 
@@ -154,7 +154,6 @@ class WasteClassifier:
 
         # Softmax if output raw logits, or read probabilities
         if np.max(output_data) > 1.0 or np.min(output_data) < 0.0:
-            # Apply softmax for raw logits
             exp_data = np.exp(output_data - np.max(output_data))
             probs = exp_data / np.sum(exp_data)
         else:
@@ -162,24 +161,29 @@ class WasteClassifier:
 
         predicted_idx = int(np.argmax(probs))
         confidence = float(probs[predicted_idx])
+
+        # Enforce confidence threshold
+        if confidence < self.confidence_threshold:
+            return ("none", confidence, -1)
+
         predicted_class = self._idx_to_class.get(str(predicted_idx), f"class_{predicted_idx}")
 
-        return (predicted_class, confidence)
+        return (predicted_class, confidence, predicted_idx)
 
 
 def create_refiner(config: RefinerConfig) -> Optional[WasteClassifier]:
-    """Factory function to instantiate WasteClassifier if enabled in config."""
+    """
+    Factory function to instantiate WasteClassifier if enabled in config.
+    Eagerly loads model weights and fails startup if model files are missing or broken.
+    """
     if not config.enabled:
         logger.info("Second-stage waste classifier disabled in configuration")
         return None
 
-    try:
-        classifier = WasteClassifier(
-            model_path=config.model_path,
-            classes_path=config.classes_path,
-            confidence_threshold=config.confidence_threshold,
-        )
-        return classifier
-    except Exception as e:
-        logger.warning("Failed to initialize WasteClassifier: %s", e)
-        return None
+    classifier = WasteClassifier(
+        model_path=config.model_path,
+        classes_path=config.classes_path,
+        confidence_threshold=config.confidence_threshold,
+    )
+    classifier._ensure_loaded()
+    return classifier

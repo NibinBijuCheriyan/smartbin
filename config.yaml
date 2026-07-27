@@ -122,13 +122,13 @@ hand_tracking:
   confidence_threshold: 0.3
 
   # Maximum distance in pixels between hand center and item bbox center to count as "held"
-  max_hand_distance_px: 150.0
+  max_hand_distance_px: 200.0
 
   # ROI padding multiplier around hand when cropping for efficient detection
-  roi_padding_factor: 1.4
+  roi_padding_factor: 2.5
 
-  # Whether to crop frame around hand ROI to increase inference speed/FPS
-  roi_crop_enabled: true
+  # Whether to crop frame around hand ROI (disable if held items extend beyond hand)
+  roi_crop_enabled: false
 
 webhook:
   # HTTP webhook endpoint for decision actuation. Set to a URL to enable.

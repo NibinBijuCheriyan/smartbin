@@ -45,11 +45,17 @@ class Detection:
     raw_yolo_conf: Optional[float] = None
     is_refined: bool = False
 
-    def with_refinement(self, new_class_name: str, new_confidence: float) -> Detection:
-        """Return a new Detection object with refined class label and confidence."""
+    def with_refinement(
+        self,
+        new_class_name: str,
+        new_confidence: float,
+        new_class_id: Optional[int] = None,
+    ) -> Detection:
+        """Return a new Detection object with refined class label, confidence, and class_id."""
+        updated_class_id = new_class_id if new_class_id is not None else self.class_id
         return Detection(
             track_id=self.track_id,
-            class_id=self.class_id,
+            class_id=updated_class_id,
             class_name=new_class_name,
             confidence=new_confidence,
             bbox=self.bbox,

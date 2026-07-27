@@ -1,0 +1,10 @@
+# Core dependencies for running inference on a laptop
+numpy>=1.20.0
+Pillow>=9.0.0
+
+# TensorFlow is required for Windows systems as official tflite-runtime wheels 
+# are not compiled for Windows via PyPI.
+tensorflow>=2.5.0
+
+# Alternative (Non-Windows / Linux / macOS):
+# tflite-runtime>=2.5.0

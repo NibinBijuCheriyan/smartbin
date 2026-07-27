@@ -1,0 +1,18 @@
+{
+  "phase_name": "fine_tuning",
+  "last_completed_epoch_index": 39,
+  "last_completed_epoch_number": 40,
+  "next_epoch_index": 40,
+  "total_epochs": 40,
+  "epochs_head": 5,
+  "epochs_fine_tune": 35,
+  "best_val_acc": 0.9662278294563293,
+  "last_epoch_logs": {
+    "acc": 0.9963173866271973,
+    "loss": 0.23619486391544342,
+    "top2_acc": 0.9998610615730286,
+    "val_acc": 0.9645105600357056,
+    "val_loss": 0.30959343910217285,
+    "val_top2_acc": 0.9948483109474182
+  }
+}

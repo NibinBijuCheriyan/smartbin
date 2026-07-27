@@ -1,0 +1,42 @@
+{
+  "dataset_dir": "/mnt/d/AI Testing/dataset/dataset_split_5class",
+  "output_dir": "/mnt/d/AI Testing/scripts/latest_model_efficientnet_b0_224_5class_int8",
+  "backbone": "efficientnet_b0",
+  "input_size": 224,
+  "batch_size": 32,
+  "epochs_head": 5,
+  "epochs_fine_tune": 35,
+  "total_epochs": 40,
+  "lr_head": 0.001,
+  "lr_fine_tune": 0.0001,
+  "label_smoothing": 0.05,
+  "fine_tune_last_n_layers": 40,
+  "representative_samples": 500,
+  "gaussian_blur_prob": 0.25,
+  "gaussian_blur_kernel_size": 5,
+  "gaussian_blur_sigma": 1.0,
+  "resume_training": true,
+  "force_fresh_start": false,
+  "expected_class_names": [
+    "plastic",
+    "paper",
+    "metal",
+    "organic_waste",
+    "none"
+  ],
+  "num_classes": 5,
+  "class_to_idx": {
+    "plastic": 0,
+    "paper": 1,
+    "metal": 2,
+    "organic_waste": 3,
+    "none": 4
+  },
+  "idx_to_class": {
+    "0": "plastic",
+    "1": "paper",
+    "2": "metal",
+    "3": "organic_waste",
+    "4": "none"
+  }
+}

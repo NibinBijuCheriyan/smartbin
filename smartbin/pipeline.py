@@ -268,22 +268,27 @@ class SmartbinPipeline:
 
                         if x2 > x1 and y2 > y1:
                             crop = frame[y1:y2, x1:x2]
-                            try:
-                                ref_class, ref_conf = self._refiner.classify(crop)
+                            ref_class, ref_conf, ref_class_id = self._refiner.classify(crop)
 
-                                # Log disagreement if refiner predicts 'none' for a confident YOLO detection
-                                if ref_class.lower() == "none" and det.class_name.lower() != "none":
-                                    logger.warning(
-                                        "Refiner disagreement: refiner predicted 'none' (conf=%.2f) "
-                                        "for YOLO detection '%s' (conf=%.2f)",
-                                        ref_conf,
+                            if ref_conf >= self._config.refiner.confidence_threshold and ref_class.lower() != "none":
+                                if ref_class.lower() != det.class_name.lower():
+                                    logger.info(
+                                        "Refiner overridden label for track %d: YOLO '%s' (conf=%.2f) -> Refiner '%s' (conf=%.2f)",
+                                        det.track_id,
                                         det.class_name,
                                         det.confidence,
+                                        ref_class,
+                                        ref_conf,
                                     )
-
-                                det = det.with_refinement(ref_class, ref_conf)
-                            except Exception as ref_err:
-                                logger.warning("Refiner inference failed for crop: %s — using YOLO label", ref_err)
+                                det = det.with_refinement(ref_class, ref_conf, ref_class_id)
+                            elif ref_class.lower() == "none" and det.class_name.lower() != "none" and ref_conf >= self._config.refiner.confidence_threshold:
+                                logger.warning(
+                                    "Refiner disagreement: refiner predicted 'none' (conf=%.2f) "
+                                    "for YOLO detection '%s' (conf=%.2f)",
+                                    ref_conf,
+                                    det.class_name,
+                                    det.confidence,
+                                )
 
                         refined_detections.append(det)
                     detections = refined_detections
