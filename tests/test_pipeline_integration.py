@@ -30,6 +30,7 @@ from smartbin.config import (
     HandTrackingConfig,
     LoggingConfig,
     ModelConfig,
+    RefinerConfig,
     SmartbinConfig,
     TrackerConfig,
     TriggerConfig,
@@ -333,6 +334,7 @@ class TestSmartbinPipelineIntegration:
             ),
             display=DisplayConfig(show=False),
             hand_tracking=HandTrackingConfig(enabled=False),
+            refiner=RefinerConfig(enabled=False),
         )
 
     def _create_test_video(self, path: str, num_static: int = 5,

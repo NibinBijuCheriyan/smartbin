@@ -142,3 +142,17 @@ webhook:
   # Max retry attempts on transient failures (exponential backoff: 1s, 2s, 4s)
   # After exhausting retries, the event is dropped (best-effort delivery).
   max_retries: 3
+
+refiner:
+  # Second-stage classification head using EfficientNet-B0 FP32 TFLite model.
+  # Overrides YOLO's classification label for detected waste bounding box crops.
+  enabled: true
+
+  # Path to TFLite model weights file (.tflite)
+  model_path: "cashcrow-classification-model/efficientnet_b0_224_5class_int8/models/waste_classifier_fp32.tflite"
+
+  # Path to classes.json file mapping class indices to names
+  classes_path: "cashcrow-classification-model/efficientnet_b0_224_5class_int8/classes.json"
+
+  # Refiner confidence threshold
+  confidence_threshold: 0.25

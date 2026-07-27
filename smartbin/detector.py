@@ -41,6 +41,24 @@ class Detection:
     bbox: tuple  # (x1, y1, x2, y2) in pixel coordinates
     hand_id: Optional[int] = None
     is_held_by_hand: bool = False
+    raw_yolo_class: Optional[str] = None
+    raw_yolo_conf: Optional[float] = None
+    is_refined: bool = False
+
+    def with_refinement(self, new_class_name: str, new_confidence: float) -> Detection:
+        """Return a new Detection object with refined class label and confidence."""
+        return Detection(
+            track_id=self.track_id,
+            class_id=self.class_id,
+            class_name=new_class_name,
+            confidence=new_confidence,
+            bbox=self.bbox,
+            hand_id=self.hand_id,
+            is_held_by_hand=self.is_held_by_hand,
+            raw_yolo_class=self.raw_yolo_class or self.class_name,
+            raw_yolo_conf=self.raw_yolo_conf if self.raw_yolo_conf is not None else self.confidence,
+            is_refined=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -206,12 +224,16 @@ class YOLODetector(BaseDetector):
                 box[2] + offset_x,
                 box[3] + offset_y,
             )
+            class_str = names.get(int(classes[i]), f"class_{classes[i]}")
+            conf_val = float(confs[i])
             det = Detection(
                 track_id=int(track_ids[i]),
                 class_id=int(classes[i]),
-                class_name=names.get(int(classes[i]), f"class_{classes[i]}"),
-                confidence=float(confs[i]),
+                class_name=class_str,
+                confidence=conf_val,
                 bbox=full_box,
+                raw_yolo_class=class_str,
+                raw_yolo_conf=conf_val,
             )
             if self._is_valid_detection(det, frame.shape):
                 detections.append(det)

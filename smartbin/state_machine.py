@@ -160,13 +160,20 @@ class StateMachine:
 
         Transitions the state machine back to IDLE.
         """
-        # Build track histories: track_id → [(class_name, confidence, hand_id, is_held_by_hand), ...]
+        # Build track histories: track_id → [(class_name, confidence, hand_id, is_held_by_hand, raw_yolo_class, is_refined), ...]
         track_histories: Dict[int, List[Tuple]] = defaultdict(list)
 
         for frame_detections in self._frame_buffer:
             for det in frame_detections:
                 track_histories[det.track_id].append(
-                    (det.class_name, det.confidence, det.hand_id, det.is_held_by_hand)
+                    (
+                        det.class_name,
+                        det.confidence,
+                        det.hand_id,
+                        det.is_held_by_hand,
+                        det.raw_yolo_class,
+                        det.is_refined,
+                    )
                 )
 
         logger.info(
@@ -191,6 +198,9 @@ class StateMachine:
                 is_certain=vr.is_certain,
                 hand_id=vr.hand_id,
                 is_held_by_hand=vr.is_held_by_hand,
+                raw_yolo_class=vr.raw_yolo_class,
+                refiner_class=vr.refiner_class,
+                is_refined=vr.is_refined,
             )
             for vr in vote_results
         ]

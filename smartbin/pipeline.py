@@ -68,6 +68,12 @@ class SmartbinPipeline:
                 max_distance_px=config.hand_tracking.max_hand_distance_px,
             )
 
+        # Second-stage WasteClassifier component
+        self._refiner = None
+        if config.refiner.enabled:
+            from smartbin.refiner import create_refiner
+            self._refiner = create_refiner(config.refiner)
+
         self._current_hands = []
         self._current_detections = []
 
@@ -240,6 +246,48 @@ class SmartbinPipeline:
                         detections,
                         max_dist_px=self._config.hand_tracking.max_hand_distance_px,
                     )
+
+                # Run second-stage refinement using EfficientNet-B0
+                if self._refiner is not None and detections:
+                    from smartbin.refiner import UNSUPPORTED_REFINER_CLASSES
+                    refined_detections = []
+                    for det in detections:
+                        # Skip refiner for classes not supported by EfficientNet (glass, e-waste)
+                        if det.class_name.lower() in UNSUPPORTED_REFINER_CLASSES:
+                            logger.debug(
+                                "Skipping refiner for class '%s' (not in classifier vocabulary)",
+                                det.class_name,
+                            )
+                            refined_detections.append(det)
+                            continue
+
+                        # Extract bounding box crop
+                        x1, y1, x2, y2 = map(int, det.bbox)
+                        x1, y1 = max(0, x1), max(0, y1)
+                        x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
+
+                        if x2 > x1 and y2 > y1:
+                            crop = frame[y1:y2, x1:x2]
+                            try:
+                                ref_class, ref_conf = self._refiner.classify(crop)
+
+                                # Log disagreement if refiner predicts 'none' for a confident YOLO detection
+                                if ref_class.lower() == "none" and det.class_name.lower() != "none":
+                                    logger.warning(
+                                        "Refiner disagreement: refiner predicted 'none' (conf=%.2f) "
+                                        "for YOLO detection '%s' (conf=%.2f)",
+                                        ref_conf,
+                                        det.class_name,
+                                        det.confidence,
+                                    )
+
+                                det = det.with_refinement(ref_class, ref_conf)
+                            except Exception as ref_err:
+                                logger.warning("Refiner inference failed for crop: %s — using YOLO label", ref_err)
+
+                        refined_detections.append(det)
+                    detections = refined_detections
+
                 self._current_detections = detections
             except Exception:
                 logger.exception(

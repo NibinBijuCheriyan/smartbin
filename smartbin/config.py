@@ -100,6 +100,15 @@ class WebhookConfig:
 
 
 @dataclass(frozen=True)
+class RefinerConfig:
+    """Configuration for the second-stage EfficientNet-B0 waste classifier."""
+    enabled: bool = True
+    model_path: str = "cashcrow-classification-model/efficientnet_b0_224_5class_int8/models/waste_classifier_fp32.tflite"
+    classes_path: str = "cashcrow-classification-model/efficientnet_b0_224_5class_int8/classes.json"
+    confidence_threshold: float = 0.25
+
+
+@dataclass(frozen=True)
 class SmartbinConfig:
     """Top-level configuration for the entire pipeline."""
 
@@ -112,6 +121,7 @@ class SmartbinConfig:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     display: DisplayConfig = field(default_factory=DisplayConfig)
     hand_tracking: HandTrackingConfig = field(default_factory=HandTrackingConfig)
+    refiner: RefinerConfig = field(default_factory=RefinerConfig)
     webhook: WebhookConfig = field(default_factory=WebhookConfig)
 
     # CLI-only flags (not in YAML config)
@@ -162,6 +172,7 @@ def load_config_from_yaml(path: Union[str, Path]) -> SmartbinConfig:
         logging=_build_section(LoggingConfig, raw, "logging"),
         display=_build_section(DisplayConfig, raw, "display"),
         hand_tracking=_build_section(HandTrackingConfig, raw, "hand_tracking"),
+        refiner=_build_section(RefinerConfig, raw, "refiner"),
         webhook=_build_section(WebhookConfig, raw, "webhook"),
     )
 

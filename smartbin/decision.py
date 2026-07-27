@@ -44,6 +44,9 @@ class DecisionEvent:
     timestamp: str  # ISO 8601 UTC timestamp
     hand_id: Optional[int] = None
     is_held_by_hand: bool = False
+    raw_yolo_class: Optional[str] = None
+    refiner_class: Optional[str] = None
+    is_refined: bool = False
 
     def to_dict(self) -> dict:
         """Serialize to a plain dict for JSON output."""
@@ -63,6 +66,9 @@ class DecisionEvent:
         is_certain: bool,
         hand_id: Optional[int] = None,
         is_held_by_hand: bool = False,
+        raw_yolo_class: Optional[str] = None,
+        refiner_class: Optional[str] = None,
+        is_refined: bool = False,
     ) -> DecisionEvent:
         """Factory with automatic UTC timestamp."""
         return DecisionEvent(
@@ -75,6 +81,9 @@ class DecisionEvent:
             timestamp=datetime.now(timezone.utc).isoformat(),
             hand_id=hand_id,
             is_held_by_hand=is_held_by_hand,
+            raw_yolo_class=raw_yolo_class,
+            refiner_class=refiner_class,
+            is_refined=is_refined,
         )
 
 

@@ -41,6 +41,9 @@ class VoteResult:
     is_certain: bool  # True if consensus ratio >= threshold
     hand_id: Optional[int] = None
     is_held_by_hand: bool = False
+    raw_yolo_class: Optional[str] = None
+    refiner_class: Optional[str] = None
+    is_refined: bool = False
 
 
 class MajorityVoter:
@@ -69,7 +72,7 @@ class MajorityVoter:
 
         Args:
             track_histories: Mapping of track_id → list of tuples:
-                             (class_name, confidence) or (class_name, confidence, hand_id, is_held_by_hand)
+                             (class_name, confidence) or (class_name, confidence, hand_id, is_held_by_hand, raw_yolo_class, is_refined)
             min_frames: Minimum number of frames a track must have to produce
                         a valid vote. Tracks with fewer frames are dropped.
 
@@ -101,10 +104,12 @@ class MajorityVoter:
         """Compute majority vote for one track."""
         total_frames = len(predictions)
 
-        # Handle predictions tuples of varying length (2 or 4 items)
+        # Handle predictions tuples of varying length (2, 4, or 6 items)
         class_names = []
         hand_ids = []
         held_flags = []
+        raw_yolo_classes = []
+        is_refined_flags = []
 
         for item in predictions:
             class_names.append(item[0])
@@ -112,6 +117,10 @@ class MajorityVoter:
                 if item[2] is not None:
                     hand_ids.append(item[2])
                 held_flags.append(item[3])
+            if len(item) >= 6:
+                if item[4] is not None:
+                    raw_yolo_classes.append(item[4])
+                is_refined_flags.append(item[5])
 
         counts = Counter(class_names)
 
@@ -141,8 +150,13 @@ class MajorityVoter:
         winning_hand_id = Counter(hand_ids).most_common(1)[0][0] if hand_ids else None
         is_held_by_hand = (sum(held_flags) > total_frames / 2.0) if held_flags else False
 
+        # Determine raw YOLO class and refinement status
+        most_common_raw_yolo = Counter(raw_yolo_classes).most_common(1)[0][0] if raw_yolo_classes else None
+        is_refined = any(is_refined_flags) if is_refined_flags else False
+        refiner_class = winning_class if is_refined else None
+
         logger.debug(
-            "Voter: track %d → %s (%.3f conf, %d/%d frames, %s, hand=%s)",
+            "Voter: track %d → %s (%.3f conf, %d/%d frames, %s, hand=%s, refined=%s)",
             track_id,
             winning_class,
             consensus_confidence,
@@ -150,6 +164,7 @@ class MajorityVoter:
             total_frames,
             "CERTAIN" if is_certain else "UNCERTAIN",
             str(winning_hand_id),
+            str(is_refined),
         )
 
         return VoteResult(
@@ -161,4 +176,7 @@ class MajorityVoter:
             is_certain=is_certain,
             hand_id=winning_hand_id,
             is_held_by_hand=is_held_by_hand,
+            raw_yolo_class=most_common_raw_yolo,
+            refiner_class=refiner_class,
+            is_refined=is_refined,
         )
