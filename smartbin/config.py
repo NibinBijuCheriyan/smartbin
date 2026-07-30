@@ -33,6 +33,7 @@ class ModelConfig:
     max_box_area_fraction: float = 0.75
     min_box_aspect_ratio: float = 0.1
     max_box_aspect_ratio: float = 10.0
+    class_agnostic: bool = False
 
 
 @dataclass(frozen=True)
@@ -249,6 +250,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=False,
         help="Allow running with generic (COCO) weights instead of a fine-tuned waste model",
     )
+    parser.add_argument(
+        "--class-agnostic",
+        action="store_true",
+        default=False,
+        help="Run YOLO as a class-agnostic object locator (bypass allowed_classes filter, "
+             "let the EfficientNet refiner do waste classification on crops)",
+    )
     return parser
 
 
@@ -303,6 +311,8 @@ def load_config(argv: Optional[list] = None) -> SmartbinConfig:
     show = args.show if args.show is not None else cfg.display.show
     log_lvl = args.log_level if args.log_level is not None else cfg.logging.level
 
+    class_agnostic = args.class_agnostic or cfg.model.class_agnostic
+
     cfg = SmartbinConfig(
         model=ModelConfig(
             weights=model_weights,
@@ -313,6 +323,7 @@ def load_config(argv: Optional[list] = None) -> SmartbinConfig:
             max_box_area_fraction=cfg.model.max_box_area_fraction,
             min_box_aspect_ratio=cfg.model.min_box_aspect_ratio,
             max_box_aspect_ratio=cfg.model.max_box_aspect_ratio,
+            class_agnostic=class_agnostic,
         ),
         trigger=cfg.trigger,
         buffer=cfg.buffer,
@@ -326,6 +337,7 @@ def load_config(argv: Optional[list] = None) -> SmartbinConfig:
         ),
         display=DisplayConfig(show=show),
         hand_tracking=ht_cfg,
+        refiner=cfg.refiner,
         webhook=cfg.webhook,
         dry_run=args.dry_run,
         allow_generic_model=args.allow_generic_model,

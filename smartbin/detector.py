@@ -253,9 +253,12 @@ class YOLODetector(BaseDetector):
     ) -> bool:
         """Filter non-waste classes and implausible boxes before voting."""
         class_name = det.class_name.lower()
-        if self._allowed_classes is not None and class_name not in self._allowed_classes:
-            logger.debug("Dropping class outside allowlist: %s", det.class_name)
-            return False
+        if not self._model_config.class_agnostic:
+            if self._allowed_classes is not None and class_name not in self._allowed_classes:
+                logger.debug("Dropping class outside allowlist: %s", det.class_name)
+                return False
+        else:
+            logger.debug("Class-agnostic mode active: skipping allowlist check for '%s'", det.class_name)
 
         frame_h, frame_w = frame_shape[:2]
         x1, y1, x2, y2 = det.bbox

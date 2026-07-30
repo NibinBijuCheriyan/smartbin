@@ -35,6 +35,10 @@ model:
   min_box_aspect_ratio: 0.1
   max_box_aspect_ratio: 10.0
 
+  # Run detector in class-agnostic mode (bypasses allowed_classes filter).
+  # Useful when using generic pretrained models (e.g. COCO yolo11n.pt) as object locators.
+  class_agnostic: false
+
 trigger:
   # Trigger method. Only "frame_diff" is implemented; future options include
   # "ir_sensor" and "weight_sensor" for hardware-based triggering.

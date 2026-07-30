@@ -261,6 +261,13 @@ class SmartbinPipeline:
                             refined_detections.append(det)
                             continue
 
+                        if self._config.model.class_agnostic:
+                            logger.info(
+                                "Class-agnostic box candidate [track %d, YOLO '%s'] sent to EfficientNet refiner",
+                                det.track_id,
+                                det.class_name,
+                            )
+
                         # Extract bounding box crop
                         x1, y1, x2, y2 = map(int, det.bbox)
                         x1, y1 = max(0, x1), max(0, y1)

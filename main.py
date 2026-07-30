@@ -118,6 +118,10 @@ def validate_model_classes(
         logger.warning(
             "Proceeding with generic model (--allow-generic-model flag)."
         )
+        logger.warning(
+            "TIP: Consider passing --class-agnostic so detections bypass class filtering "
+            "and reach the EfficientNet refiner."
+        )
         return True
 
     logger.error(
