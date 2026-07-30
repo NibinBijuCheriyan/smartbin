@@ -133,6 +133,91 @@ def validate_model_classes(
     return False
 
 
+def _apply_weight_fallbacks(config):
+    """
+    Handle missing weights and auto-enable class-agnostic mode.
+
+    If the configured weights file (e.g. best.pt) does not exist, automatically
+    fall back to yolo11n.pt with class-agnostic + allow-generic-model enabled.
+    If allow_generic_model is already set with a non-waste model, auto-enable
+    class_agnostic so detections aren't silently dropped.
+
+    Returns a (possibly rebuilt) SmartbinConfig.
+    """
+    from smartbin.config import ModelConfig, SmartbinConfig
+
+    weights_path = Path(config.model.weights)
+    needs_rebuild = False
+    new_weights = config.model.weights
+    new_allow_generic = config.allow_generic_model
+    new_class_agnostic = config.model.class_agnostic
+
+    # --- Fallback: configured weights file missing ---
+    if not weights_path.exists() and not config.model.weights.startswith("yolo"):
+        fallback = Path("yolo11n.pt")
+        if fallback.exists():
+            logger.warning("=" * 60)
+            logger.warning(
+                "Configured weights '%s' not found on disk.",
+                config.model.weights,
+            )
+            logger.warning(
+                "AUTO-FALLBACK: Using '%s' as class-agnostic object locator "
+                "with EfficientNet refiner for waste classification.",
+                fallback,
+            )
+            logger.warning("=" * 60)
+            new_weights = str(fallback)
+            new_allow_generic = True
+            new_class_agnostic = True
+            needs_rebuild = True
+        else:
+            logger.error(
+                "Configured weights '%s' not found and no fallback "
+                "model (yolo11n.pt) available. Cannot start pipeline.",
+                config.model.weights,
+            )
+            sys.exit(1)
+
+    # --- Auto class-agnostic: generic model without the flag ---
+    if new_allow_generic and not new_class_agnostic:
+        logger.info(
+            "Generic model enabled — auto-activating class-agnostic mode "
+            "so COCO detections reach the EfficientNet refiner."
+        )
+        new_class_agnostic = True
+        needs_rebuild = True
+
+    if not needs_rebuild:
+        return config
+
+    return SmartbinConfig(
+        model=ModelConfig(
+            weights=new_weights,
+            confidence_threshold=config.model.confidence_threshold,
+            device=config.model.device,
+            allowed_classes=config.model.allowed_classes,
+            min_box_area_fraction=config.model.min_box_area_fraction,
+            max_box_area_fraction=config.model.max_box_area_fraction,
+            min_box_aspect_ratio=config.model.min_box_aspect_ratio,
+            max_box_aspect_ratio=config.model.max_box_aspect_ratio,
+            class_agnostic=new_class_agnostic,
+        ),
+        trigger=config.trigger,
+        buffer=config.buffer,
+        tracker=config.tracker,
+        voter=config.voter,
+        camera=config.camera,
+        logging=config.logging,
+        display=config.display,
+        hand_tracking=config.hand_tracking,
+        refiner=config.refiner,
+        webhook=config.webhook,
+        dry_run=config.dry_run,
+        allow_generic_model=new_allow_generic,
+    )
+
+
 def main() -> None:
     """CLI entry point for the Smartbin pipeline."""
     try:
@@ -142,15 +227,20 @@ def main() -> None:
         # Set up logging
         setup_logging(config.logging)
 
+        # Apply weight fallbacks (missing best.pt → yolo11n.pt + class-agnostic)
+        config = _apply_weight_fallbacks(config)
+
         logger.info("=" * 60)
         logger.info("Cashcrow Smartbin — Starting pipeline")
         logger.info("=" * 60)
-        logger.info("Model weights: %s", config.model.weights)
-        logger.info("Video source:  %s", config.camera.source)
-        logger.info("Confidence:    %.2f", config.model.confidence_threshold)
-        logger.info("Hand tracking: %s (ROI crop: %s)", config.hand_tracking.enabled, config.hand_tracking.roi_crop_enabled)
-        logger.info("Window size:   %d frames", config.buffer.active_window_size)
-        logger.info("Idle timeout:  %d frames", config.buffer.idle_timeout_frames)
+        logger.info("Model weights:   %s", config.model.weights)
+        logger.info("Class-agnostic:  %s", config.model.class_agnostic)
+        logger.info("Video source:    %s", config.camera.source)
+        logger.info("Confidence:      %.2f", config.model.confidence_threshold)
+        logger.info("Hand tracking:   %s (ROI crop: %s)", config.hand_tracking.enabled, config.hand_tracking.roi_crop_enabled)
+        logger.info("Refiner:         %s", "enabled" if config.refiner.enabled else "disabled")
+        logger.info("Window size:     %d frames", config.buffer.active_window_size)
+        logger.info("Idle timeout:    %d frames", config.buffer.idle_timeout_frames)
         logger.info("=" * 60)
 
         # Validate model classes

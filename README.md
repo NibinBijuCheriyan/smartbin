@@ -152,15 +152,35 @@ python main.py --dry-run
 |---|---|---|
 | `--config` | `config.yaml` | Path to YAML config file |
 | `--source` | `0` (webcam) | Video source (camera index `0` or file path) |
-| `--weights` | `best.pt` | Path to YOLO model weights |
+| `--weights` | `best.pt` | Path to YOLO model weights (auto-falls back to `yolo11n.pt` + class-agnostic mode if missing) |
 | `--confidence` | `0.25` | Detection confidence threshold (0.0 – 1.0) |
-| `--class-agnostic` | `False` | Run YOLO as generic object locator & refine with EfficientNet |
-| `--allow-generic-model` | `False` | Allow running with generic COCO model weights |
+| `--class-agnostic` | `False` | Run YOLO as generic object locator (bypasses class filtering, lets EfficientNet refiner classify crops) |
+| `--allow-generic-model` | `False` | Allow running with generic COCO model weights (automatically enables `--class-agnostic`) |
 | `--track-hands` | `False` | Enable hand tracking and object association |
 | `--hand-roi` | `False` | Enable ROI cropping around hands |
 | `--show` | `False` | Display live annotated OpenCV preview window |
 | `--log-level` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `--dry-run` | `False` | Validate configuration and model weights, then exit |
+
+---
+
+## Model Weight Asset Management
+
+Large binary model files (`.pt`, `.tflite`, `.onnx`, `.engine`, `.keras`) are excluded from Git repository tracking via `.gitignore`.
+
+### Automatic Fallback Behavior
+- If `best.pt` is not found locally, `main.py` automatically falls back to `yolo11n.pt` with `--class-agnostic` mode enabled out-of-the-box.
+- Detections will use YOLO as an object locator while the included EfficientNet TFLite refiner handles waste classification.
+
+### Fetching & Training Custom Weights
+1. **Fine-Tuned YOLO Detector (`best.pt`)**:
+   Run the training pipeline to generate fine-tuned waste detection weights:
+   ```bash
+   python train_waste_model.py
+   ```
+2. **External Model Artifacts**:
+   Place fine-tuned YOLO weights at the project root as `best.pt` or specify your custom path using `--weights path/to/model.pt`.
+
 
 ---
 

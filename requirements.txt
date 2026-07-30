@@ -3,7 +3,10 @@ ultralytics>=8.0
 opencv-python>=4.8
 pyyaml>=6.0
 numpy>=1.24
+pillow>=9.0
 mediapipe>=0.10
+ai-edge-litert>=1.0.0
+requests>=2.28
 
 # Dev / test dependencies
 pytest>=7.0

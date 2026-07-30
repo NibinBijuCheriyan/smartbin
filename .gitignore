@@ -32,6 +32,11 @@ decisions.jsonl
 *.pt
 *.onnx
 *.engine
+*.tflite
+*.keras
+*.h5
+*.task
+*.pth
 
 # Training artifacts
 runs/
@@ -49,5 +54,8 @@ confusion_matrix.png
 # Previously committed files (ensure not re-added)
 22-17-04.mp4
 
-# Classification model artifacts
-# cashcrow-classification-model/
+# Classification model large binaries
+cashcrow-classification-model/**/models/*.tflite
+cashcrow-classification-model/**/models/*.keras
+cashcrow-classification-model/**/models/*.h5
+
