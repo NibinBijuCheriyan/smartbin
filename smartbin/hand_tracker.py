@@ -17,6 +17,7 @@ Provides:
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import logging
 import urllib.request
@@ -464,55 +465,85 @@ def associate_hands_and_objects(
     """
     Associate waste object detections with nearby hand detections.
 
+    Enforces a 1:1 match: each hand claims at most one object (the one it
+    contains the most of, with center-distance as a tiebreak), and each
+    object is claimed by at most one hand. This matters because a naive
+    "nearest hand within range" rule tags EVERY object near a hand as
+    "held" — so a second item merely sitting near the hand (on a table,
+    in the background) gets flagged as held too, and downstream code has
+    no way to tell which one the hand is actually holding. Restricting to
+    the single best match per hand removes that ambiguity at the source.
+
     Updates detection objects with hand_id and is_held_by_hand flags.
+    Detections not claimed by any hand are returned unmodified.
     """
     if not hands or not detections:
         return detections
 
-    updated_detections = []
-    for det in detections:
-        # Calculate object center
+    # Build every viable (hand, object) candidate pair with a match score.
+    # Score prioritizes containment (what fraction of the object's box sits
+    # inside the hand's box) since that's a much stronger "is this actually
+    # in the hand" signal than raw center-to-center distance — a large
+    # object whose center is far from the hand's centroid can still be
+    # mostly inside the hand's box, and a small nearby object can have a
+    # close centroid while barely overlapping at all.
+    candidates = []  # (score, hand_idx, det_idx)
+    for det_idx, det in enumerate(detections):
         ox1, oy1, ox2, oy2 = det.bbox
         ocx = (ox1 + ox2) / 2.0
         ocy = (oy1 + oy2) / 2.0
+        obj_area = max(1e-6, (ox2 - ox1) * (oy2 - oy1))
 
-        best_hand_id = None
-        min_dist = float("inf")
-
-        for hand in hands:
+        for hand_idx, hand in enumerate(hands):
             hx1, hy1, hx2, hy2 = hand.bbox
             hcx, hcy = hand.center
 
-            # Check bounding box overlap/intersection
             overlap_x = max(0.0, min(ox2, hx2) - max(ox1, hx1))
             overlap_y = max(0.0, min(oy2, hy2) - max(oy1, hy1))
             intersection = overlap_x * overlap_y
+            containment = intersection / obj_area  # 0..1
 
-            # Center-to-center distance
             dist = math.hypot(ocx - hcx, ocy - hcy)
 
-            # If there's direct bbox overlap or within distance threshold
-            if intersection > 0 or dist <= max_dist_px:
-                if dist < min_dist:
-                    min_dist = dist
-                    best_hand_id = hand.hand_id
+            if intersection <= 0 and dist > max_dist_px:
+                continue  # not a viable pair at all
 
-        if best_hand_id is not None:
-            from smartbin.detector import Detection
-            det_updated = Detection(
-                track_id=det.track_id,
-                class_id=det.class_id,
-                class_name=det.class_name,
-                confidence=det.confidence,
-                bbox=det.bbox,
-                hand_id=best_hand_id,
-                is_held_by_hand=True,
+            # Containment dominates; distance only breaks ties between
+            # pairs with similar (often zero) containment.
+            score = containment - (min(dist, max_dist_px) / max_dist_px) * 1e-3
+            candidates.append((score, hand_idx, det_idx))
+
+    # Greedy 1:1 assignment: take the best-scoring pair first, lock both
+    # sides, repeat. This is not globally-optimal bipartite matching, but
+    # for the small per-frame counts here (a handful of hands/objects) it
+    # gives the same result in practice and is far simpler to reason about.
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    claimed_hands: set = set()
+    claimed_dets: set = set()
+    det_to_hand_id: dict = {}
+
+    for score, hand_idx, det_idx in candidates:
+        if hand_idx in claimed_hands or det_idx in claimed_dets:
+            continue
+        det_to_hand_id[det_idx] = hands[hand_idx].hand_id
+        claimed_hands.add(hand_idx)
+        claimed_dets.add(det_idx)
+
+    updated_detections = []
+    for det_idx, det in enumerate(detections):
+        if det_idx in det_to_hand_id:
+            updated_detections.append(
+                dataclasses.replace(
+                    det,
+                    hand_id=det_to_hand_id[det_idx],
+                    is_held_by_hand=True,
+                )
             )
-            updated_detections.append(det_updated)
         else:
             updated_detections.append(det)
 
     return updated_detections
+
 
 
 def get_hand_roi(

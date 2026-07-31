@@ -45,6 +45,12 @@ class StateMachine:
     - ACTIVE + idle counter exceeds threshold → finalize → IDLE
     """
 
+    # Offset added to hand_id to build a synthetic vote-history key for
+    # hand-anchored detections (see _finalize). Chosen large enough that it
+    # can't collide with any realistic object-tracker track_id in a single
+    # active window.
+    _HAND_ANCHOR_OFFSET = 1_000_000
+
     def __init__(
         self,
         buffer_config: BufferConfig,
@@ -160,12 +166,35 @@ class StateMachine:
 
         Transitions the state machine back to IDLE.
         """
-        # Build track histories: track_id → [(class_name, confidence, hand_id, is_held_by_hand, raw_yolo_class, is_refined), ...]
+        # Build track histories, keyed by track_id → [(class_name, confidence, hand_id, is_held_by_hand, raw_yolo_class, is_refined), ...]
+        #
+        # Exception: when a detection is confidently tied to a hand
+        # (is_held_by_hand=True, courtesy of the 1:1 matching in
+        # associate_hands_and_objects), we group it by that hand instead of
+        # by track_id. Why: track_id comes from the object tracker and can
+        # reset mid-window on a brief occlusion or a missed frame (e.g. the
+        # hand momentarily blocks the item), which would otherwise split one
+        # continuous "hand carries item to bin" event into two partial,
+        # separately-voted decisions. The hand tracker's own centroid
+        # tracking (hand_tracker.py) tolerates short gaps, so anchoring to
+        # hand_id keeps the vote history intact across those gaps.
+        #
+        # Detections with no confident hand association still key by
+        # track_id exactly as before — this only changes behavior when hand
+        # tracking is enabled and a hand is actually holding something.
+        #
+        # Hand-anchored keys use a large offset so they can never collide
+        # with a real track_id, while remaining a plain int (unlike a tuple
+        # key) so nothing downstream that assumes an int track_id breaks.
         track_histories: Dict[int, List[Tuple]] = defaultdict(list)
 
         for frame_detections in self._frame_buffer:
             for det in frame_detections:
-                track_histories[det.track_id].append(
+                if det.is_held_by_hand and det.hand_id is not None:
+                    key = self._HAND_ANCHOR_OFFSET + det.hand_id
+                else:
+                    key = det.track_id
+                track_histories[key].append(
                     (
                         det.class_name,
                         det.confidence,

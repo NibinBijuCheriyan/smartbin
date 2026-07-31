@@ -248,3 +248,118 @@ def test_tracker_reset_clears_state():
     hands2 = tracker.detect_and_track(frame)
     if len(hands2) > 0:
         assert hands2[0].hand_id == 1  # Fresh ID after reset
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: 1:1 hand-object matching
+#
+# Before the fix, associate_hands_and_objects tagged EVERY object within
+# range of a hand as "held" by that hand. If two objects were both near
+# the same hand (e.g. one truly in-hand, one just sitting nearby), both got
+# is_held_by_hand=True with the same hand_id, and nothing downstream could
+# tell which one the hand actually held.
+# ---------------------------------------------------------------------------
+
+
+def test_associate_two_objects_near_one_hand_only_tags_best_match():
+    """Two objects both within range of one hand: only the one the hand
+    actually contains should be tagged as held; the merely-nearby one
+    should NOT be tagged, even though it's within max_dist_px."""
+    hands = [
+        HandDetection(
+            hand_id=1,
+            confidence=0.9,
+            bbox=(50.0, 50.0, 150.0, 150.0),
+            center=(100.0, 100.0),
+        )
+    ]
+
+    # Truly held: mostly inside the hand's bbox.
+    det_truly_held = Detection(
+        track_id=10,
+        class_id=0,
+        class_name="plastic",
+        confidence=0.95,
+        bbox=(80.0, 80.0, 120.0, 120.0),
+    )
+
+    # Merely nearby: within max_dist_px of the hand's center, but no
+    # bbox overlap at all (e.g. sitting on a table next to the hand).
+    det_merely_nearby = Detection(
+        track_id=11,
+        class_id=1,
+        class_name="paper",
+        confidence=0.90,
+        bbox=(200.0, 100.0, 240.0, 140.0),
+    )
+
+    updated = associate_hands_and_objects(
+        hands, [det_truly_held, det_merely_nearby], max_dist_px=150.0
+    )
+
+    held = [d for d in updated if d.is_held_by_hand]
+    assert len(held) == 1, (
+        f"Expected exactly 1 object tagged as held, got {len(held)}. "
+        f"Multiple objects near the same hand should not all be tagged."
+    )
+    assert held[0].track_id == 10
+    assert held[0].hand_id == 1
+
+    not_held = [d for d in updated if not d.is_held_by_hand]
+    assert len(not_held) == 1
+    assert not_held[0].track_id == 11
+    assert not_held[0].hand_id is None
+
+
+def test_associate_two_hands_two_objects_is_one_to_one():
+    """Two hands, two candidate objects, both objects roughly equidistant
+    from both hands: matching must still be 1:1 (no object claimed by two
+    hands, no hand claiming two objects)."""
+    hands = [
+        HandDetection(hand_id=1, confidence=0.9, bbox=(0, 0, 60, 60), center=(30, 30)),
+        HandDetection(hand_id=2, confidence=0.9, bbox=(200, 0, 260, 60), center=(230, 30)),
+    ]
+    det_a = Detection(
+        track_id=10, class_id=0, class_name="plastic", confidence=0.9,
+        bbox=(10, 10, 50, 50),  # inside hand 1
+    )
+    det_b = Detection(
+        track_id=11, class_id=1, class_name="metal", confidence=0.9,
+        bbox=(210, 10, 250, 50),  # inside hand 2
+    )
+
+    updated = associate_hands_and_objects(hands, [det_a, det_b], max_dist_px=150.0)
+
+    by_track = {d.track_id: d for d in updated}
+    assert by_track[10].hand_id == 1
+    assert by_track[10].is_held_by_hand is True
+    assert by_track[11].hand_id == 2
+    assert by_track[11].is_held_by_hand is True
+
+    # No double-claiming: the two hand_ids used must be distinct.
+    used_hand_ids = {d.hand_id for d in updated if d.is_held_by_hand}
+    assert used_hand_ids == {1, 2}
+
+
+def test_associate_preserves_refiner_fields():
+    """associate_hands_and_objects must not clobber fields set by other
+    pipeline stages (e.g. the refiner), regardless of call order."""
+    hands = [
+        HandDetection(hand_id=1, confidence=0.9, bbox=(0, 0, 60, 60), center=(30, 30)),
+    ]
+    det = Detection(
+        track_id=10, class_id=0, class_name="plastic", confidence=0.9,
+        bbox=(10, 10, 50, 50),
+        raw_yolo_class="bottle",
+        raw_yolo_conf=0.6,
+        is_refined=True,
+    )
+
+    updated = associate_hands_and_objects(hands, [det], max_dist_px=150.0)
+
+    assert updated[0].raw_yolo_class == "bottle"
+    assert updated[0].raw_yolo_conf == 0.6
+    assert updated[0].is_refined is True
+    assert updated[0].is_held_by_hand is True
+    assert updated[0].hand_id == 1
+

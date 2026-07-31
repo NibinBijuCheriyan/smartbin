@@ -19,6 +19,8 @@ def _det(
     track_id: int = 1,
     class_name: str = "plastic",
     confidence: float = 0.9,
+    hand_id: int | None = None,
+    is_held_by_hand: bool = False,
 ) -> Detection:
     """Create a synthetic Detection."""
     return Detection(
@@ -27,6 +29,8 @@ def _det(
         class_name=class_name,
         confidence=confidence,
         bbox=(100, 100, 200, 200),
+        hand_id=hand_id,
+        is_held_by_hand=is_held_by_hand,
     )
 
 
@@ -230,3 +234,70 @@ class TestStateMachineMultipleTracks:
             classes = {e.track_id: e.item_class for e in result}
             assert classes[1] == "plastic"
             assert classes[2] == "metal"
+
+
+class TestHandAnchoredVoting:
+    """Regression tests: hand-held detections are grouped by hand_id, not
+    track_id, so the object tracker resetting mid-window (e.g. the hand
+    briefly occludes the item) doesn't fragment one hand-to-bin event into
+    two separate, partially-voted decisions."""
+
+    def test_track_id_churn_does_not_fragment_hand_held_decision(self):
+        """Same physical item, same hand, but the object tracker assigns a
+        NEW track_id partway through (simulating a brief occlusion/re-init).
+        Without hand-anchoring this produces two decisions; with it, one."""
+        sm = _make_sm(window_size=6, min_frames=1)
+        sm.activate()
+
+        # Frames 1-3: track_id=10, held by hand 1
+        for _ in range(3):
+            sm.feed([_det(track_id=10, class_name="plastic", confidence=0.9,
+                           hand_id=1, is_held_by_hand=True)])
+
+        # Frames 4-6: tracker lost and reassigned a new track_id=11,
+        # but it's still the same hand (hand_id=1) holding the same item.
+        result = None
+        for _ in range(3):
+            r = sm.feed([_det(track_id=11, class_name="plastic", confidence=0.9,
+                               hand_id=1, is_held_by_hand=True)])
+            if r is not None:
+                result = r
+
+        if result is None:
+            result = sm.force_finalize()
+
+        assert result is not None
+        assert len(result) == 1, (
+            f"Expected 1 decision (hand-anchored across the track_id "
+            f"change), got {len(result)}. track_id churn should not split "
+            f"a single hand-held item into multiple decisions."
+        )
+        assert result[0].item_class == "plastic"
+        assert result[0].total_frames == 6
+        assert result[0].hand_id == 1
+        assert result[0].is_held_by_hand is True
+
+    def test_non_held_detections_still_key_by_track_id(self):
+        """Detections with no confident hand association (is_held_by_hand
+        False, e.g. hand tracking disabled or nothing claimed by a hand)
+        must still be grouped by track_id exactly as before — this is an
+        opt-in behavior change, not a rewrite of the no-hands path."""
+        sm = _make_sm(window_size=4, min_frames=1)
+        sm.activate()
+
+        result = None
+        for _ in range(4):
+            r = sm.feed([
+                _det(track_id=1, class_name="plastic", confidence=0.9),
+                _det(track_id=2, class_name="metal", confidence=0.85),
+            ])
+            if r is not None:
+                result = r
+
+        if result is None:
+            result = sm.force_finalize()
+
+        assert result is not None
+        classes = {e.track_id: e.item_class for e in result}
+        assert classes.get(1) == "plastic"
+        assert classes.get(2) == "metal"

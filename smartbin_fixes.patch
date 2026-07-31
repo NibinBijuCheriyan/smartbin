@@ -79,3 +79,400 @@ index 0a2248c..e16a7c3 100644
      cfg = SmartbinConfig(
          model=ModelConfig(
              weights=model_weights,
+diff --git a/smartbin/hand_tracker.py b/smartbin/hand_tracker.py
+index e0e4aca..0c20e6a 100644
+--- a/smartbin/hand_tracker.py
++++ b/smartbin/hand_tracker.py
+@@ -17,6 +17,7 @@ Provides:
+ 
+ from __future__ import annotations
+ 
++import dataclasses
+ import math
+ import logging
+ import urllib.request
+@@ -464,57 +465,87 @@ def associate_hands_and_objects(
+     """
+     Associate waste object detections with nearby hand detections.
+ 
++    Enforces a 1:1 match: each hand claims at most one object (the one it
++    contains the most of, with center-distance as a tiebreak), and each
++    object is claimed by at most one hand. This matters because a naive
++    "nearest hand within range" rule tags EVERY object near a hand as
++    "held" — so a second item merely sitting near the hand (on a table,
++    in the background) gets flagged as held too, and downstream code has
++    no way to tell which one the hand is actually holding. Restricting to
++    the single best match per hand removes that ambiguity at the source.
++
+     Updates detection objects with hand_id and is_held_by_hand flags.
++    Detections not claimed by any hand are returned unmodified.
+     """
+     if not hands or not detections:
+         return detections
+ 
+-    updated_detections = []
+-    for det in detections:
+-        # Calculate object center
++    # Build every viable (hand, object) candidate pair with a match score.
++    # Score prioritizes containment (what fraction of the object's box sits
++    # inside the hand's box) since that's a much stronger "is this actually
++    # in the hand" signal than raw center-to-center distance — a large
++    # object whose center is far from the hand's centroid can still be
++    # mostly inside the hand's box, and a small nearby object can have a
++    # close centroid while barely overlapping at all.
++    candidates = []  # (score, hand_idx, det_idx)
++    for det_idx, det in enumerate(detections):
+         ox1, oy1, ox2, oy2 = det.bbox
+         ocx = (ox1 + ox2) / 2.0
+         ocy = (oy1 + oy2) / 2.0
++        obj_area = max(1e-6, (ox2 - ox1) * (oy2 - oy1))
+ 
+-        best_hand_id = None
+-        min_dist = float("inf")
+-
+-        for hand in hands:
++        for hand_idx, hand in enumerate(hands):
+             hx1, hy1, hx2, hy2 = hand.bbox
+             hcx, hcy = hand.center
+ 
+-            # Check bounding box overlap/intersection
+             overlap_x = max(0.0, min(ox2, hx2) - max(ox1, hx1))
+             overlap_y = max(0.0, min(oy2, hy2) - max(oy1, hy1))
+             intersection = overlap_x * overlap_y
++            containment = intersection / obj_area  # 0..1
+ 
+-            # Center-to-center distance
+             dist = math.hypot(ocx - hcx, ocy - hcy)
+ 
+-            # If there's direct bbox overlap or within distance threshold
+-            if intersection > 0 or dist <= max_dist_px:
+-                if dist < min_dist:
+-                    min_dist = dist
+-                    best_hand_id = hand.hand_id
+-
+-        if best_hand_id is not None:
+-            from smartbin.detector import Detection
+-            det_updated = Detection(
+-                track_id=det.track_id,
+-                class_id=det.class_id,
+-                class_name=det.class_name,
+-                confidence=det.confidence,
+-                bbox=det.bbox,
+-                hand_id=best_hand_id,
+-                is_held_by_hand=True,
++            if intersection <= 0 and dist > max_dist_px:
++                continue  # not a viable pair at all
++
++            # Containment dominates; distance only breaks ties between
++            # pairs with similar (often zero) containment.
++            score = containment - (min(dist, max_dist_px) / max_dist_px) * 1e-3
++            candidates.append((score, hand_idx, det_idx))
++
++    # Greedy 1:1 assignment: take the best-scoring pair first, lock both
++    # sides, repeat. This is not globally-optimal bipartite matching, but
++    # for the small per-frame counts here (a handful of hands/objects) it
++    # gives the same result in practice and is far simpler to reason about.
++    candidates.sort(key=lambda c: c[0], reverse=True)
++    claimed_hands: set = set()
++    claimed_dets: set = set()
++    det_to_hand_id: dict = {}
++
++    for score, hand_idx, det_idx in candidates:
++        if hand_idx in claimed_hands or det_idx in claimed_dets:
++            continue
++        det_to_hand_id[det_idx] = hands[hand_idx].hand_id
++        claimed_hands.add(hand_idx)
++        claimed_dets.add(det_idx)
++
++    updated_detections = []
++    for det_idx, det in enumerate(detections):
++        if det_idx in det_to_hand_id:
++            updated_detections.append(
++                dataclasses.replace(
++                    det,
++                    hand_id=det_to_hand_id[det_idx],
++                    is_held_by_hand=True,
++                )
+             )
+-            updated_detections.append(det_updated)
+         else:
+             updated_detections.append(det)
+ 
+     return updated_detections
+ 
+ 
++
+ def get_hand_roi(
+     frame_shape: Tuple[int, int],
+     hands: List[HandDetection],
+diff --git a/smartbin/state_machine.py b/smartbin/state_machine.py
+index 301d336..4dd0e4e 100644
+--- a/smartbin/state_machine.py
++++ b/smartbin/state_machine.py
+@@ -45,6 +45,12 @@ class StateMachine:
+     - ACTIVE + idle counter exceeds threshold → finalize → IDLE
+     """
+ 
++    # Offset added to hand_id to build a synthetic vote-history key for
++    # hand-anchored detections (see _finalize). Chosen large enough that it
++    # can't collide with any realistic object-tracker track_id in a single
++    # active window.
++    _HAND_ANCHOR_OFFSET = 1_000_000
++
+     def __init__(
+         self,
+         buffer_config: BufferConfig,
+@@ -160,12 +166,35 @@ class StateMachine:
+ 
+         Transitions the state machine back to IDLE.
+         """
+-        # Build track histories: track_id → [(class_name, confidence, hand_id, is_held_by_hand, raw_yolo_class, is_refined), ...]
++        # Build track histories, keyed by track_id → [(class_name, confidence, hand_id, is_held_by_hand, raw_yolo_class, is_refined), ...]
++        #
++        # Exception: when a detection is confidently tied to a hand
++        # (is_held_by_hand=True, courtesy of the 1:1 matching in
++        # associate_hands_and_objects), we group it by that hand instead of
++        # by track_id. Why: track_id comes from the object tracker and can
++        # reset mid-window on a brief occlusion or a missed frame (e.g. the
++        # hand momentarily blocks the item), which would otherwise split one
++        # continuous "hand carries item to bin" event into two partial,
++        # separately-voted decisions. The hand tracker's own centroid
++        # tracking (hand_tracker.py) tolerates short gaps, so anchoring to
++        # hand_id keeps the vote history intact across those gaps.
++        #
++        # Detections with no confident hand association still key by
++        # track_id exactly as before — this only changes behavior when hand
++        # tracking is enabled and a hand is actually holding something.
++        #
++        # Hand-anchored keys use a large offset so they can never collide
++        # with a real track_id, while remaining a plain int (unlike a tuple
++        # key) so nothing downstream that assumes an int track_id breaks.
+         track_histories: Dict[int, List[Tuple]] = defaultdict(list)
+ 
+         for frame_detections in self._frame_buffer:
+             for det in frame_detections:
+-                track_histories[det.track_id].append(
++                if det.is_held_by_hand and det.hand_id is not None:
++                    key = self._HAND_ANCHOR_OFFSET + det.hand_id
++                else:
++                    key = det.track_id
++                track_histories[key].append(
+                     (
+                         det.class_name,
+                         det.confidence,
+diff --git a/tests/test_hand_tracker.py b/tests/test_hand_tracker.py
+index 294c580..73d3575 100644
+--- a/tests/test_hand_tracker.py
++++ b/tests/test_hand_tracker.py
+@@ -248,3 +248,118 @@ def test_tracker_reset_clears_state():
+     hands2 = tracker.detect_and_track(frame)
+     if len(hands2) > 0:
+         assert hands2[0].hand_id == 1  # Fresh ID after reset
++
++
++# ---------------------------------------------------------------------------
++# Regression tests: 1:1 hand-object matching
++#
++# Before the fix, associate_hands_and_objects tagged EVERY object within
++# range of a hand as "held" by that hand. If two objects were both near
++# the same hand (e.g. one truly in-hand, one just sitting nearby), both got
++# is_held_by_hand=True with the same hand_id, and nothing downstream could
++# tell which one the hand actually held.
++# ---------------------------------------------------------------------------
++
++
++def test_associate_two_objects_near_one_hand_only_tags_best_match():
++    """Two objects both within range of one hand: only the one the hand
++    actually contains should be tagged as held; the merely-nearby one
++    should NOT be tagged, even though it's within max_dist_px."""
++    hands = [
++        HandDetection(
++            hand_id=1,
++            confidence=0.9,
++            bbox=(50.0, 50.0, 150.0, 150.0),
++            center=(100.0, 100.0),
++        )
++    ]
++
++    # Truly held: mostly inside the hand's bbox.
++    det_truly_held = Detection(
++        track_id=10,
++        class_id=0,
++        class_name="plastic",
++        confidence=0.95,
++        bbox=(80.0, 80.0, 120.0, 120.0),
++    )
++
++    # Merely nearby: within max_dist_px of the hand's center, but no
++    # bbox overlap at all (e.g. sitting on a table next to the hand).
++    det_merely_nearby = Detection(
++        track_id=11,
++        class_id=1,
++        class_name="paper",
++        confidence=0.90,
++        bbox=(200.0, 100.0, 240.0, 140.0),
++    )
++
++    updated = associate_hands_and_objects(
++        hands, [det_truly_held, det_merely_nearby], max_dist_px=150.0
++    )
++
++    held = [d for d in updated if d.is_held_by_hand]
++    assert len(held) == 1, (
++        f"Expected exactly 1 object tagged as held, got {len(held)}. "
++        f"Multiple objects near the same hand should not all be tagged."
++    )
++    assert held[0].track_id == 10
++    assert held[0].hand_id == 1
++
++    not_held = [d for d in updated if not d.is_held_by_hand]
++    assert len(not_held) == 1
++    assert not_held[0].track_id == 11
++    assert not_held[0].hand_id is None
++
++
++def test_associate_two_hands_two_objects_is_one_to_one():
++    """Two hands, two candidate objects, both objects roughly equidistant
++    from both hands: matching must still be 1:1 (no object claimed by two
++    hands, no hand claiming two objects)."""
++    hands = [
++        HandDetection(hand_id=1, confidence=0.9, bbox=(0, 0, 60, 60), center=(30, 30)),
++        HandDetection(hand_id=2, confidence=0.9, bbox=(200, 0, 260, 60), center=(230, 30)),
++    ]
++    det_a = Detection(
++        track_id=10, class_id=0, class_name="plastic", confidence=0.9,
++        bbox=(10, 10, 50, 50),  # inside hand 1
++    )
++    det_b = Detection(
++        track_id=11, class_id=1, class_name="metal", confidence=0.9,
++        bbox=(210, 10, 250, 50),  # inside hand 2
++    )
++
++    updated = associate_hands_and_objects(hands, [det_a, det_b], max_dist_px=150.0)
++
++    by_track = {d.track_id: d for d in updated}
++    assert by_track[10].hand_id == 1
++    assert by_track[10].is_held_by_hand is True
++    assert by_track[11].hand_id == 2
++    assert by_track[11].is_held_by_hand is True
++
++    # No double-claiming: the two hand_ids used must be distinct.
++    used_hand_ids = {d.hand_id for d in updated if d.is_held_by_hand}
++    assert used_hand_ids == {1, 2}
++
++
++def test_associate_preserves_refiner_fields():
++    """associate_hands_and_objects must not clobber fields set by other
++    pipeline stages (e.g. the refiner), regardless of call order."""
++    hands = [
++        HandDetection(hand_id=1, confidence=0.9, bbox=(0, 0, 60, 60), center=(30, 30)),
++    ]
++    det = Detection(
++        track_id=10, class_id=0, class_name="plastic", confidence=0.9,
++        bbox=(10, 10, 50, 50),
++        raw_yolo_class="bottle",
++        raw_yolo_conf=0.6,
++        is_refined=True,
++    )
++
++    updated = associate_hands_and_objects(hands, [det], max_dist_px=150.0)
++
++    assert updated[0].raw_yolo_class == "bottle"
++    assert updated[0].raw_yolo_conf == 0.6
++    assert updated[0].is_refined is True
++    assert updated[0].is_held_by_hand is True
++    assert updated[0].hand_id == 1
++
+diff --git a/tests/test_state_machine.py b/tests/test_state_machine.py
+index c5c9a4f..3c5a724 100644
+--- a/tests/test_state_machine.py
++++ b/tests/test_state_machine.py
+@@ -19,6 +19,8 @@ def _det(
+     track_id: int = 1,
+     class_name: str = "plastic",
+     confidence: float = 0.9,
++    hand_id: int | None = None,
++    is_held_by_hand: bool = False,
+ ) -> Detection:
+     """Create a synthetic Detection."""
+     return Detection(
+@@ -27,6 +29,8 @@ def _det(
+         class_name=class_name,
+         confidence=confidence,
+         bbox=(100, 100, 200, 200),
++        hand_id=hand_id,
++        is_held_by_hand=is_held_by_hand,
+     )
+ 
+ 
+@@ -230,3 +234,70 @@ class TestStateMachineMultipleTracks:
+             classes = {e.track_id: e.item_class for e in result}
+             assert classes[1] == "plastic"
+             assert classes[2] == "metal"
++
++
++class TestHandAnchoredVoting:
++    """Regression tests: hand-held detections are grouped by hand_id, not
++    track_id, so the object tracker resetting mid-window (e.g. the hand
++    briefly occludes the item) doesn't fragment one hand-to-bin event into
++    two separate, partially-voted decisions."""
++
++    def test_track_id_churn_does_not_fragment_hand_held_decision(self):
++        """Same physical item, same hand, but the object tracker assigns a
++        NEW track_id partway through (simulating a brief occlusion/re-init).
++        Without hand-anchoring this produces two decisions; with it, one."""
++        sm = _make_sm(window_size=6, min_frames=1)
++        sm.activate()
++
++        # Frames 1-3: track_id=10, held by hand 1
++        for _ in range(3):
++            sm.feed([_det(track_id=10, class_name="plastic", confidence=0.9,
++                           hand_id=1, is_held_by_hand=True)])
++
++        # Frames 4-6: tracker lost and reassigned a new track_id=11,
++        # but it's still the same hand (hand_id=1) holding the same item.
++        result = None
++        for _ in range(3):
++            r = sm.feed([_det(track_id=11, class_name="plastic", confidence=0.9,
++                               hand_id=1, is_held_by_hand=True)])
++            if r is not None:
++                result = r
++
++        if result is None:
++            result = sm.force_finalize()
++
++        assert result is not None
++        assert len(result) == 1, (
++            f"Expected 1 decision (hand-anchored across the track_id "
++            f"change), got {len(result)}. track_id churn should not split "
++            f"a single hand-held item into multiple decisions."
++        )
++        assert result[0].item_class == "plastic"
++        assert result[0].total_frames == 6
++        assert result[0].hand_id == 1
++        assert result[0].is_held_by_hand is True
++
++    def test_non_held_detections_still_key_by_track_id(self):
++        """Detections with no confident hand association (is_held_by_hand
++        False, e.g. hand tracking disabled or nothing claimed by a hand)
++        must still be grouped by track_id exactly as before — this is an
++        opt-in behavior change, not a rewrite of the no-hands path."""
++        sm = _make_sm(window_size=4, min_frames=1)
++        sm.activate()
++
++        result = None
++        for _ in range(4):
++            r = sm.feed([
++                _det(track_id=1, class_name="plastic", confidence=0.9),
++                _det(track_id=2, class_name="metal", confidence=0.85),
++            ])
++            if r is not None:
++                result = r
++
++        if result is None:
++            result = sm.force_finalize()
++
++        assert result is not None
++        classes = {e.track_id: e.item_class for e in result}
++        assert classes.get(1) == "plastic"
++        assert classes.get(2) == "metal"
