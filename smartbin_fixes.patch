@@ -1,0 +1,81 @@
+diff --git a/README.md b/README.md
+index 358d3cf..64984e0 100644
+--- a/README.md
++++ b/README.md
+@@ -155,7 +155,7 @@ python main.py --dry-run
+ | `--weights` | `best.pt` | Path to YOLO model weights |
+ | `--confidence` | `0.25` | Detection confidence threshold (0.0 – 1.0) |
+ | `--class-agnostic` | `False` | Run YOLO as generic object locator & refine with EfficientNet |
+-| `--allow-generic-model` | `False` | Allow running with generic COCO model weights |
++| `--allow-generic-model` | `False` | Allow running with generic COCO model weights. Without a custom `best.pt`, this auto-enables `--class-agnostic` too — otherwise every detection is silently dropped by the waste-class allowlist and the pipeline produces zero decisions. |
+ | `--track-hands` | `False` | Enable hand tracking and object association |
+ | `--hand-roi` | `False` | Enable ROI cropping around hands |
+ | `--show` | `False` | Display live annotated OpenCV preview window |
+diff --git a/pyproject.toml b/pyproject.toml
+index 701b4ca..55d117e 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [build-system]
+ requires = ["setuptools>=68.0", "wheel"]
+-build-backend = "setuptools.backends._legacy:_Backend"
++build-backend = "setuptools.build_meta"
+ 
+ [project]
+ name = "cashcrow-smartbin"
+@@ -15,6 +15,9 @@ dependencies = [
+     "opencv-python>=4.8",
+     "pyyaml>=6.0",
+     "numpy>=1.24",
++    "pillow>=9.0",
++    "ai-edge-litert>=1.0; sys_platform != 'win32'",
++    "tensorflow>=2.5; sys_platform == 'win32'",
+ ]
+ 
+ [project.optional-dependencies]
+diff --git a/requirements.txt b/requirements.txt
+index 7152328..e1e9437 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -5,6 +5,15 @@ pyyaml>=6.0
+ numpy>=1.24
+ mediapipe>=0.10
+ 
++# Required by smartbin/refiner.py (EfficientNet-B0 second-stage classifier,
++# enabled by default in config.yaml). Without these, refiner.py raises
++# ImportError the first time it tries to load the TFLite model.
++pillow>=9.0.0
++ai-edge-litert>=1.0; sys_platform != "win32"
++# tflite-runtime has no official Windows wheels on PyPI, so Windows users
++# need the full tensorflow package instead.
++tensorflow>=2.5.0; sys_platform == "win32"
++
+ # Dev / test dependencies
+ pytest>=7.0
+ pytest-cov>=4.0
+diff --git a/smartbin/config.py b/smartbin/config.py
+index 0a2248c..e16a7c3 100644
+--- a/smartbin/config.py
++++ b/smartbin/config.py
+@@ -313,6 +313,21 @@ def load_config(argv: Optional[list] = None) -> SmartbinConfig:
+ 
+     class_agnostic = args.class_agnostic or cfg.model.class_agnostic
+ 
++    # Running with generic (COCO) weights but WITHOUT class-agnostic mode
++    # means every single detection gets dropped by the allowed_classes
++    # filter in detector.py (COCO labels never match the 7 waste classes),
++    # so the pipeline silently produces zero decisions. Auto-enable
++    # class-agnostic mode in that case so --allow-generic-model actually
++    # does something useful out of the box.
++    if args.allow_generic_model and not class_agnostic:
++        logger.warning(
++            "--allow-generic-model was set without --class-agnostic — "
++            "auto-enabling class-agnostic mode so detections aren't silently "
++            "dropped by the waste-class allowlist. Pass --class-agnostic "
++            "explicitly to silence this warning."
++        )
++        class_agnostic = True
++
+     cfg = SmartbinConfig(
+         model=ModelConfig(
+             weights=model_weights,
