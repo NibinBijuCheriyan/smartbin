@@ -154,30 +154,23 @@ def _apply_weight_fallbacks(config):
 
     # --- Fallback: configured weights file missing ---
     if not weights_path.exists() and not config.model.weights.startswith("yolo"):
-        fallback = Path("yolo11n.pt")
-        if fallback.exists():
-            logger.warning("=" * 60)
-            logger.warning(
-                "Configured weights '%s' not found on disk.",
-                config.model.weights,
-            )
-            logger.warning(
-                "AUTO-FALLBACK: Using '%s' as class-agnostic object locator "
-                "with EfficientNet refiner for waste classification.",
-                fallback,
-            )
-            logger.warning("=" * 60)
-            new_weights = str(fallback)
-            new_allow_generic = True
-            new_class_agnostic = True
-            needs_rebuild = True
-        else:
-            logger.error(
-                "Configured weights '%s' not found and no fallback "
-                "model (yolo11n.pt) available. Cannot start pipeline.",
-                config.model.weights,
-            )
-            sys.exit(1)
+        logger.warning("=" * 60)
+        logger.warning(
+            "Configured weights '%s' not found on disk.",
+            config.model.weights,
+        )
+        logger.warning(
+            "AUTO-FALLBACK: Using 'yolo11n.pt' as class-agnostic object "
+            "locator with EfficientNet refiner for waste classification.",
+        )
+        logger.warning(
+            "Ultralytics will auto-download yolo11n.pt if not cached locally.",
+        )
+        logger.warning("=" * 60)
+        new_weights = "yolo11n.pt"
+        new_allow_generic = True
+        new_class_agnostic = True
+        needs_rebuild = True
 
     # --- Auto class-agnostic: generic model without the flag ---
     if new_allow_generic and not new_class_agnostic:
