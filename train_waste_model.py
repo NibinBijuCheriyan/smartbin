@@ -47,10 +47,11 @@ logger = logging.getLogger(__name__)
 # Class mappings
 # ---------------------------------------------------------------------------
 
-# Mapping of TACO category names to Cashcrow target classes
+# Mapping of TACO category names to Cashcrow target classes (5 classes: plastic, paper, metal, glass, other)
+# e-waste and organic are dropped - mapped to "other" or excluded
 TACO_TO_CASHCROW = {
     "Aluminium foil": "metal",
-    "Battery": "e-waste",
+    "Battery": "other",  # was e-waste, now mapped to other
     "Aluminium blister pack": "metal",
     "Carded blister pack": "paper",
     "Clear plastic bottle": "plastic",
@@ -72,7 +73,7 @@ TACO_TO_CASHCROW = {
     "Foam cup": "plastic",
     "Glass cup": "glass",
     "Other plastic cup": "plastic",
-    "Food waste": "organic",
+    "Food waste": "other",  # was organic, now mapped to other
     "Plastic lid": "plastic",
     "Metal lid": "metal",
     "Magazine paper": "paper",
@@ -114,7 +115,7 @@ TACO_TO_CASHCROW = {
     "Tetra pack": "paper",
 }
 
-# Mapping of TrashNet categories to Cashcrow target classes
+# Mapping of TrashNet categories to Cashcrow target classes (5 classes)
 TRASHNET_TO_CASHCROW = {
     "glass": "glass",
     "paper": "paper",
@@ -124,11 +125,12 @@ TRASHNET_TO_CASHCROW = {
     "trash": "other",
 }
 
-CLASSES = ["plastic", "paper", "metal", "glass", "e-waste", "organic", "other"]
+# 5-class target: e-waste and organic dropped (merged into "other")
+CLASSES = ["plastic", "paper", "metal", "glass", "other"]
 CLASS_TO_IDX = {name: idx for idx, name in enumerate(CLASSES)}
 
 # Minimum images per class in the training split to consider the dataset usable
-MIN_IMAGES_PER_CLASS = 20
+MIN_IMAGES_PER_CLASS = 50
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +199,17 @@ def extract_foreground_bbox(
     Returns:
         Tuple (cx, cy, w, h) in normalized [0, 1] coordinates.
     """
-    h, w = img.shape[:2]
+    orig_h, orig_w = img.shape[:2]
+
+    # Resize image for fast GrabCut segmentation
+    max_dim = 256
+    if max(orig_h, orig_w) > max_dim:
+        scale = max_dim / float(max(orig_h, orig_w))
+        proc_img = cv2.resize(img, (int(orig_w * scale), int(orig_h * scale)))
+    else:
+        proc_img = img
+
+    h, w = proc_img.shape[:2]
 
     # Initial rectangle for GrabCut (exclude a small margin around edges)
     margin_x = max(5, int(w * margin_fraction))
@@ -209,7 +221,7 @@ def extract_foreground_bbox(
     fgd_model = np.zeros((1, 65), dtype=np.float64)
 
     try:
-        cv2.grabCut(img, mask, rect, bgd_model, fgd_model, 3, cv2.GC_INIT_WITH_RECT)
+        cv2.grabCut(proc_img, mask, rect, bgd_model, fgd_model, 3, cv2.GC_INIT_WITH_RECT)
 
         # Foreground = definite foreground (3) + probable foreground (1)
         fg_mask = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0).astype(
@@ -251,24 +263,24 @@ def generate_mock_dataset(dataset_dir: Path, num_images: int = 140) -> None:
     """Generates a synthetic dataset for testing the training and benchmark flow."""
     logger.info("Generating synthetic mock dataset...")
 
-    # Create directory structure
-    for split in ["train", "val"]:
+    # Create directory structure (train/val/test)
+    for split in ["train", "val", "test"]:
         (dataset_dir / "images" / split).mkdir(parents=True, exist_ok=True)
         (dataset_dir / "labels" / split).mkdir(parents=True, exist_ok=True)
 
-    splits = ["train"] * int(num_images * 0.8) + ["val"] * (
-        num_images - int(num_images * 0.8)
-    )
+    # 70/20/10 split
+    train_count = int(num_images * 0.7)
+    val_count = int(num_images * 0.2)
+    test_count = num_images - train_count - val_count
+    splits = ["train"] * train_count + ["val"] * val_count + ["test"] * test_count
     random.shuffle(splits)
 
-    # Visual features of each class to make synthetic images slightly realistic
+    # Visual features of each class (5 classes: plastic, paper, metal, glass, other)
     class_visuals = {
         "plastic": {"color": (255, 0, 0), "shape": "rect"},
         "paper": {"color": (19, 136, 219), "shape": "rect"},
         "metal": {"color": (192, 192, 192), "shape": "circle"},
         "glass": {"color": (0, 255, 0), "shape": "ellipse"},
-        "e-waste": {"color": (0, 0, 255), "shape": "poly"},
-        "organic": {"color": (0, 255, 255), "shape": "star"},
         "other": {"color": (128, 128, 128), "shape": "line"},
     }
 
@@ -335,7 +347,7 @@ def generate_mock_dataset(dataset_dir: Path, num_images: int = 140) -> None:
         with open(label_path, "w") as f:
             f.write(f"{class_idx} {nx:.6f} {ny:.6f} {nw:.6f} {nh:.6f}\n")
 
-    logger.info("Mock dataset generated at %s (%d images)", dataset_dir, num_images)
+    logger.info("Mock dataset generated at %s (%d images, split=70/20/10)", dataset_dir, num_images)
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +391,7 @@ def process_trashnet(
     trashnet_dir: Path,
     dataset_dir: Path,
     trashnet_mode: str = "grabcut",
-    max_images: int = 500,
+    max_images: int = 0,  # 0 = use all available images
 ) -> int:
     """
     Process TrashNet images into YOLO detection format.
@@ -390,7 +402,7 @@ def process_trashnet(
         trashnet_mode: How to handle TrashNet images:
             - "grabcut": Use GrabCut foreground segmentation for bounding boxes.
             - "drop": Skip TrashNet entirely (rely on TACO only).
-        max_images: Maximum number of TrashNet images to include.
+        max_images: Maximum number of TrashNet images to include (0 = all).
 
     Returns:
         Number of images processed.
@@ -425,12 +437,26 @@ def process_trashnet(
                 all_images.append((class_path / file_name, class_idx, mapped_class))
 
     random.shuffle(all_images)
-    subset = all_images[:max_images]
+
+    # Use all images if max_images is 0
+    if max_images > 0:
+        all_images = all_images[:max_images]
 
     count = 0
-    for idx, (img_path, class_idx, mapped_class) in enumerate(subset):
-        split = "train" if idx < len(subset) * 0.8 else "val"
-        dest_img = dataset_dir / "images" / split / f"trashnet_{idx:04d}.jpg"
+    num_images = len(all_images)
+    # 70/20/10 split
+    train_end = int(num_images * 0.7)
+    val_end = train_end + int(num_images * 0.2)
+
+    for idx, (img_path, class_idx, mapped_class) in enumerate(all_images):
+        if idx < train_end:
+            split = "train"
+        elif idx < val_end:
+            split = "val"
+        else:
+            split = "test"
+
+        dest_img = dataset_dir / "images" / split / f"trashnet_{idx:05d}.jpg"
 
         img = cv2.imread(str(img_path))
         if img is None:
@@ -442,14 +468,14 @@ def process_trashnet(
         # Compute bounding box via GrabCut foreground segmentation
         cx, cy, nw, nh = extract_foreground_bbox(img)
 
-        dest_label = dataset_dir / "labels" / split / f"trashnet_{idx:04d}.txt"
+        dest_label = dataset_dir / "labels" / split / f"trashnet_{idx:05d}.txt"
         with open(dest_label, "w") as lf:
             lf.write(f"{class_idx} {cx:.6f} {cy:.6f} {nw:.6f} {nh:.6f}\n")
 
         count += 1
 
     logger.info(
-        "Processed %d TrashNet images (mode=%s)", count, trashnet_mode
+        "Processed %d TrashNet images (mode=%s, split=70/20/10)", count, trashnet_mode
     )
     return count
 
@@ -483,7 +509,7 @@ def download_taco(data_dir: Path) -> Path:
 def process_taco(
     taco_json: Path,
     dataset_dir: Path,
-    max_images: int = 100,
+    max_images: int = 500,
 ) -> int:
     """
     Download and process TACO images + annotations into YOLO format.
@@ -493,7 +519,7 @@ def process_taco(
     Returns:
         Number of images processed.
     """
-    logger.info("Processing TACO annotations from %s...", taco_json)
+    logger.info("Processing TACO annotations from %s (max_images=%d)...", taco_json, max_images)
 
     try:
         with open(taco_json, "r") as f:
@@ -516,11 +542,9 @@ def process_taco(
     taco_images = taco_data["images"]
     random.shuffle(taco_images)
 
-    taco_count = 0
+    # Filter images that have at least one mappable annotation
+    valid_images = []
     for img_entry in taco_images:
-        if taco_count >= max_images:
-            break
-
         img_id = img_entry["id"]
         if img_id not in img_annotations:
             continue
@@ -528,6 +552,39 @@ def process_taco(
         url = img_entry.get("flickr_640_url") or img_entry.get("flickr_url")
         if not url:
             continue
+
+        # Check if this image has at least one mappable class
+        has_mappable = False
+        for ann in img_annotations[img_id]:
+            cat_name = taco_categories.get(ann["category_id"])
+            if TACO_TO_CASHCROW.get(cat_name):
+                has_mappable = True
+                break
+
+        if has_mappable:
+            valid_images.append(img_entry)
+
+    logger.info("Found %d TACO images with mappable annotations (out of %d total)", len(valid_images), len(taco_images))
+
+    # Limit to max_images
+    valid_images = valid_images[:max_images]
+    num_images = len(valid_images)
+
+    # 70/20/10 split
+    train_end = int(num_images * 0.7)
+    val_end = train_end + int(num_images * 0.2)
+
+    taco_count = 0
+    for idx, img_entry in enumerate(valid_images):
+        if idx < train_end:
+            split = "train"
+        elif idx < val_end:
+            split = "val"
+        else:
+            split = "test"
+
+        img_id = img_entry["id"]
+        url = img_entry.get("flickr_640_url") or img_entry.get("flickr_url")
 
         # Remap classes for this image
         labels_lines = []
@@ -554,13 +611,12 @@ def process_taco(
         if not labels_lines:
             continue
 
-        split = "train" if taco_count < max_images * 0.8 else "val"
-        dest_img = dataset_dir / "images" / split / f"taco_{taco_count:04d}.jpg"
+        dest_img = dataset_dir / "images" / split / f"taco_{idx:05d}.jpg"
 
         try:
             download_file(url, dest_img)
             dest_label = (
-                dataset_dir / "labels" / split / f"taco_{taco_count:04d}.txt"
+                dataset_dir / "labels" / split / f"taco_{idx:05d}.txt"
             )
             with open(dest_label, "w") as lf:
                 lf.write("\n".join(labels_lines) + "\n")
@@ -568,7 +624,7 @@ def process_taco(
         except DatasetError as e:
             logger.warning("Skipping TACO image %d: %s", img_id, e)
 
-    logger.info("Processed %d TACO images.", taco_count)
+    logger.info("Processed %d TACO images (split=70/20/10).", taco_count)
     return taco_count
 
 
@@ -581,20 +637,20 @@ def integrate_cashcrow_data(cashcrow_dir: Path, dataset_dir: Path) -> int:
     """
     Copy first-party Cashcrow bin images + labels into the dataset.
 
-    Expects YOLO format: cashcrow_dir/images/{train,val}/*.jpg
-                         cashcrow_dir/labels/{train,val}/*.txt
+    Expects YOLO format: cashcrow_dir/images/{train,val,test}/*.jpg
+                         cashcrow_dir/labels/{train,val,test}/*.txt
 
     Returns:
         Number of images integrated.
     """
     count = 0
-    for split in ["train", "val"]:
+    for split in ["train", "val", "test"]:
         src_images = cashcrow_dir / "images" / split
         src_labels = cashcrow_dir / "labels" / split
 
         if not src_images.exists():
-            logger.warning(
-                "Cashcrow data split '%s' not found at %s", split, src_images
+            logger.debug(
+                "Cashcrow data split '%s' not found at %s (skipping)", split, src_images
             )
             continue
 
@@ -642,14 +698,14 @@ def check_dataset_integrity(
     class_counts: dict = {
         "train": defaultdict(int),
         "val": defaultdict(int),
+        "test": defaultdict(int),
     }
 
-    for split in ["train", "val"]:
+    for split in ["train", "val", "test"]:
         labels_dir = dataset_dir / "labels" / split
         if not labels_dir.exists():
-            raise DatasetIntegrityError(
-                f"Labels directory not found: {labels_dir}"
-            )
+            logger.warning("Labels directory not found for %s split: %s", split, labels_dir)
+            continue
 
         for label_file in labels_dir.glob("*.txt"):
             with open(label_file, "r") as f:
@@ -662,28 +718,31 @@ def check_dataset_integrity(
 
     # Log breakdown
     logger.info("")
-    logger.info("%-12s | %10s | %10s", "Class", "Train", "Val")
-    logger.info("-" * 40)
+    logger.info("%-12s | %10s | %10s | %10s", "Class", "Train", "Val", "Test")
+    logger.info("-" * 52)
 
     total_train = 0
     total_val = 0
+    total_test = 0
     starved_classes = []
 
     for cls in CLASSES:
         train_n = class_counts["train"].get(cls, 0)
         val_n = class_counts["val"].get(cls, 0)
+        test_n = class_counts["test"].get(cls, 0)
         total_train += train_n
         total_val += val_n
+        total_test += test_n
 
         marker = ""
         if train_n < min_per_class:
             marker = " *** UNDER-REPRESENTED ***"
             starved_classes.append((cls, train_n))
 
-        logger.info("%-12s | %10d | %10d%s", cls, train_n, val_n, marker)
+        logger.info("%-12s | %10d | %10d | %10d%s", cls, train_n, val_n, test_n, marker)
 
-    logger.info("-" * 40)
-    logger.info("%-12s | %10d | %10d", "TOTAL", total_train, total_val)
+    logger.info("-" * 52)
+    logger.info("%-12s | %10d | %10d | %10d", "TOTAL", total_train, total_val, total_test)
     logger.info("")
 
     if starved_classes:
@@ -737,8 +796,8 @@ def setup_real_dataset(
     """
     dataset_dir = data_dir / "dataset"
 
-    # Create directory structure
-    for split in ["train", "val"]:
+    # Create directory structure (train/val/test)
+    for split in ["train", "val", "test"]:
         (dataset_dir / "images" / split).mkdir(parents=True, exist_ok=True)
         (dataset_dir / "labels" / split).mkdir(parents=True, exist_ok=True)
 
@@ -929,7 +988,7 @@ def main() -> None:
         "--cashcrow-data",
         type=str,
         default=None,
-        help="Path to first-party Cashcrow bin images (YOLO format: images/{train,val}, labels/{train,val}).",
+        help="Path to first-party Cashcrow bin images (YOLO format: images/{train,val,test}, labels/{train,val,test}).",
     )
     args = parser.parse_args()
 
@@ -972,15 +1031,14 @@ def main() -> None:
     yaml_content = f"""path: {dataset_dir.absolute().as_posix()}
 train: images/train
 val: images/val
+test: images/test
 
 names:
   0: plastic
   1: paper
   2: metal
   3: glass
-  4: e-waste
-  5: organic
-  6: other
+  4: other
 """
     with open(dataset_yaml, "w") as f:
         f.write(yaml_content)

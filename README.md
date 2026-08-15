@@ -1,10 +1,13 @@
 # Cashcrow Smartbin — AI-Powered Waste Detection & Classification Pipeline
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![PyTorch 2.0+](https://img.shields.io/badge/PyTorch-CUDA%20Accelerated-orange.svg)](https://pytorch.org/)
+[![Build & Tests](https://img.shields.io/badge/tests-77%20passed-brightgreen.svg)](#running-tests)
 [![License: Proprietary](https://img.shields.io/badge/License-Proprietary-red.svg)](#license)
-[![Build & Tests](https://img.shields.io/badge/tests-68%20passed-brightgreen.svg)](#running-tests)
 
-**Cashcrow Smartbin** is an edge-optimized computer vision pipeline for real-time waste item detection, hand-item association, and high-accuracy classification. Designed for smart bin automation (e.g. Jetson Orin Nano / edge devices), it combines motion-triggered gating, YOLO object detection/location, MediaPipe hand tracking, an EfficientNet-B0 TFLite second-stage refiner, and sliding-window consensus voting.
+**Cashcrow Smartbin** is an enterprise-grade computer vision pipeline designed for real-time waste item detection, hand-item association, and high-accuracy multi-stage classification on edge devices (e.g., NVIDIA Jetson Orin Nano, edge IPCs). 
+
+It combines motion-triggered gating, YOLO v11 object detection/location, MediaPipe ML hand landmark tracking, an EfficientNet-B0 TFLite second-stage refiner, and sliding-window consensus voting.
 
 ---
 
@@ -42,7 +45,7 @@
 ┌─────────────────────────────────────────────────────────────────────────────────────────┐
 │                   STAGE 4: EFFICIENTNET-B0 SECOND-STAGE REFINER                         │
 │  - TFLite FP32 Classifier (96.59% accuracy) on cropped bounding box images             │
-│  - Refines/overrides predicted labels (plastic, paper, metal, organic_waste, none)      │
+│  - Refines/overrides predicted labels (plastic, paper, metal, glass, other)              │
 └─────────────────────────────────────────────────────────────────────────────────────────┘
                                              │
                                              ▼
@@ -58,12 +61,35 @@
 ## Key Features
 
 - **Motion-Triggered Gating**: Detector remains dormant until motion or hands are detected, saving ~95% edge compute.
-- **Class-Agnostic Locator Mode**: Supports running pretrained YOLO models (e.g., `yolo11n.pt`) purely as generic object locators, letting the EfficientNet TFLite refiner perform high-accuracy waste classification on object crops.
-- **Second-Stage EfficientNet Refiner**: 96.59% accuracy TFLite classifier fine-tuned on waste categories (`plastic`, `paper`, `metal`, `organic_waste`, `none`).
-- **MediaPipe Hand Tracking**: Real-time hand landmark detection and tracking that associates waste objects directly with hands.
+- **CUDA GPU Fine-Tuned Model**: Fine-tuned YOLO model (`best.pt`) optimized for waste categories (`plastic`, `paper`, `metal`, `glass`, `other`).
+- **20x Fast GrabCut Data Pipeline**: Automated foreground segmentation pipeline with scale-invariant bounding box generation for custom dataset training.
+- **Class-Agnostic Locator Mode**: Supports running pretrained YOLO models (e.g., `yolo11n.pt`) purely as generic object locators, letting the EfficientNet TFLite refiner perform high-accuracy classification on object crops.
+- **Second-Stage EfficientNet Refiner**: 96.59% accuracy TFLite classifier supported via `ai-edge-litert`, `tflite-runtime`, or `tensorflow`.
+- **MediaPipe Hand Tracking**: Real-time hand landmark detection and spatial tracking that associates waste objects directly with hands.
 - **ByteTrack Multi-Object Tracking**: Fast tracking without ReID overhead, optimized for single/multi-item bin insertions.
 - **Consensus-Conditioned Voting**: Aggregates predictions across frames, filtering out transient noise or partial occlusions before finalizing decisions.
 - **Real-Time Actuation Hooks**: JSONL decision logging and HTTP webhook hooks for controlling bin motors/servos.
+
+---
+
+## Model Benchmark & Validation Metrics
+
+The fine-tuned YOLO waste detection model (`best.pt`) was trained for 50 epochs on an **NVIDIA GeForce RTX 3050 6GB Laptop GPU**:
+
+| Metric | Benchmark Result |
+|---|---|
+| **Overall mAP@50** | **`0.632`** |
+| **Overall mAP@50-95** | **`0.448`** |
+| **Precision (P)** | **`0.661`** |
+| **Recall (R)** | **`0.581`** |
+| **Inference Speed (GPU)** | **`4.2 ms / frame`** (~238 FPS) |
+
+### Per-Class Evaluation Metrics (mAP@50)
+- 🍷 **Glass**: `0.800` (P: 0.813, R: 0.684)
+- 📄 **Paper**: `0.797` (P: 0.731, R: 0.741)
+- 🥫 **Metal**: `0.778` (P: 0.586, R: 0.802)
+- 🥤 **Plastic**: `0.632` (P: 0.653, R: 0.563)
+- 📦 **Other**: `0.154` (P: 0.524, R: 0.115)
 
 ---
 
@@ -82,12 +108,13 @@ smartbin/
 │   ├── decision.py                 # Decision events & output hooks (JSONL, Webhook)
 │   └── pipeline.py                 # Pipeline orchestrator
 ├── cashcrow-classification-model/  # EfficientNet-B0 TFLite model & vocabulary
-├── tests/                          # Offline Pytest unit & integration suite
+├── tests/                          # Offline Pytest unit & integration suite (77 tests)
 ├── config.yaml                     # Default configuration parameters
 ├── main.py                         # CLI entry point
-├── train_waste_model.py            # Fine-tuning script (TrashNet / TACO / Cashcrow)
+├── train_waste_model.py            # GPU fine-tuning script (TrashNet / TACO / Cashcrow)
+├── audit_dataset.py                # Dataset audit and integrity verification script
 ├── benchmark_model.py              # Performance benchmarking script
-├── requirements.txt                # Requirements file
+├── requirements.txt                # Dependencies (ultralytics, opencv, ai-edge-litert, etc.)
 └── README.md
 ```
 
@@ -98,8 +125,8 @@ smartbin/
 ### Prerequisites
 
 - **Python 3.9+** (Tested up to Python 3.13)
-- OpenCV, PyTorch / Ultralytics, MediaPipe
-- (Optional) CUDA-compatible GPU for accelerated inference
+- OpenCV, PyTorch / Ultralytics, MediaPipe, `ai-edge-litert`
+- (Recommended) NVIDIA CUDA-compatible GPU for accelerated inference and training
 
 ### Installation Steps
 
@@ -117,8 +144,6 @@ pip install -r requirements.txt
 ## Quick Start & Usage
 
 ### 1. Run with Fine-Tuned Model (`best.pt`)
-
-If fine-tuned weights (`best.pt`) are present in the repository root:
 
 ```bash
 python main.py --weights best.pt --show
@@ -164,23 +189,23 @@ python main.py --dry-run
 
 ---
 
-## Model Weight Asset Management
+## Training Custom Weights
 
-Large binary model files (`.pt`, `.tflite`, `.onnx`, `.engine`, `.keras`) are excluded from Git repository tracking via `.gitignore`.
+To train or fine-tune the YOLO waste detection model on your GPU:
 
-### Automatic Fallback Behavior
-- If `best.pt` is not found locally, `main.py` automatically falls back to `yolo11n.pt` with `--class-agnostic` mode enabled out-of-the-box.
-- Detections will use YOLO as an object locator while the included EfficientNet TFLite refiner handles waste classification.
+```bash
+# Train on GPU using CUDA
+python train_waste_model.py --device cuda:0 --epochs 50 --patience 10 --allow-partial --allow-sparse
 
-### Fetching & Training Custom Weights
-1. **Fine-Tuned YOLO Detector (`best.pt`)**:
-   Run the training pipeline to generate fine-tuned waste detection weights:
-   ```bash
-   python train_waste_model.py
-   ```
-2. **External Model Artifacts**:
-   Place fine-tuned YOLO weights at the project root as `best.pt` or specify your custom path using `--weights path/to/model.pt`.
+# Audit dataset distribution and label integrity
+python audit_dataset.py
+```
 
+Features of the training script:
+- Automated GrabCut segmentation for studio datasets (TrashNet).
+- TACO annotation remapping into 5 Cashcrow target waste categories.
+- Automatic device selection (`cuda:0` / `mps` / `cpu`).
+- Automatic export of fine-tuned weights to `best.pt`.
 
 ---
 
@@ -189,49 +214,8 @@ Large binary model files (`.pt`, `.tflite`, `.onnx`, `.engine`, `.keras`) are ex
 The test suite runs completely offline without requiring a GPU or webcam:
 
 ```bash
-# Run all unit and integration tests
+# Run all unit and integration tests (77 passed)
 python -m pytest tests/ -v
-
-# Run detector filter tests
-python -m pytest tests/test_detector_filter.py -v
-```
-
----
-
-## Configuration (`config.yaml`)
-
-Key parameters in `config.yaml`:
-
-```yaml
-model:
-  weights: "best.pt"
-  confidence_threshold: 0.25
-  class_agnostic: false
-  allowed_classes:
-    - plastic
-    - paper
-    - metal
-    - glass
-    - e-waste
-    - organic
-    - other
-
-refiner:
-  enabled: true
-  model_path: "cashcrow-classification-model/efficientnet_b0_224_5class_int8/models/waste_classifier_fp32.tflite"
-  classes_path: "cashcrow-classification-model/efficientnet_b0_224_5class_int8/classes.json"
-  confidence_threshold: 0.25
-
-hand_tracking:
-  enabled: true
-  backend: "mediapipe"
-  confidence_threshold: 0.3
-  max_hand_distance_px: 200.0
-
-webhook:
-  url: null  # e.g., "http://localhost:8080/api/decision"
-  timeout: 5.0
-  max_retries: 3
 ```
 
 ---

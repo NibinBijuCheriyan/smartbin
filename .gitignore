@@ -59,3 +59,7 @@ cashcrow-classification-model/**/models/*.tflite
 cashcrow-classification-model/**/models/*.keras
 cashcrow-classification-model/**/models/*.h5
 
+# Patches
+*.patch
+
+
