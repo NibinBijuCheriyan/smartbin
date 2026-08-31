@@ -442,6 +442,7 @@ class TestSmartbinPipelineIntegration:
             ),
             display=config.display,
             hand_tracking=config.hand_tracking,
+            refiner=config.refiner,
         )
 
         pipeline = SmartbinPipeline(config)
