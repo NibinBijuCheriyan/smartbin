@@ -1,0 +1,63 @@
+# ============================================================================
+# SmartBin AI v2 — YOLO11 Training Configuration
+# ============================================================================
+
+training:
+  experiment_name: "smartbin-yolo11s-indian-waste"
+  model: "yolo11s.pt" # yolo11n.pt, yolo11s.pt (default), yolo11m.pt
+  data: "smartbin-v2/datasets/smartbin_dataset.yaml"
+  epochs: 150
+  batch_size: 16
+  imgsz: 640
+  device: "auto" # "auto", "0", "0,1", "cpu"
+  workers: 4
+
+  # Optimization & Learning Rate
+  optimizer: "AdamW" # "SGD", "Adam", "AdamW"
+  lr0: 0.001 # Initial learning rate
+  lrf: 0.01 # Final learning rate factor (lr0 * lrf)
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 3.0
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+
+  # Scheduler & Regularization
+  cos_lr: true # Cosine learning rate scheduler
+  patience: 25 # Early stopping patience
+  ema: true # Exponential Moving Average of model weights
+  amp: true # Automatic Mixed Precision (FP16)
+  gradient_accumulation_steps: 1
+  deterministic: true # Seed reproducibility
+  seed: 42
+
+  # Augmentation Hyperparameters in YOLO
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  degrees: 15.0
+  translate: 0.1
+  scale: 0.5
+  shear: 2.0
+  perspective: 0.0005
+  flipud: 0.2
+  fliplr: 0.5
+  mosaic: 1.0
+  mixup: 0.15
+  copy_paste: 0.2
+  auto_augment: "randaugment"
+  erasing: 0.3
+
+  # Checkpointing & Validation
+  save_period: 10
+  val: true
+  plots: true
+  save: true
+
+# MLflow Experiment Tracking
+mlflow:
+  enabled: true
+  tracking_uri: "file:./smartbin-v2/experiments/mlruns"
+  experiment_name: "smartbin-v2-training"
+  log_models: true
+  log_confusion_matrix: true

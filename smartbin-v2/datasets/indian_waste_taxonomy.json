@@ -1,0 +1,264 @@
+{
+  "project": "SmartBin AI v2 - Indian Municipal Waste Taxonomy",
+  "version": "2.0.0",
+  "target_classes": 28,
+  "bins": ["recyclable", "compost", "landfill", "reject"],
+  "classes": [
+    {
+      "id": 0,
+      "name": "aluminium_can",
+      "category": "recyclables",
+      "target_bin": "recyclable",
+      "material": "aluminium",
+      "description": "Beverage and soft drink cans made of aluminium"
+    },
+    {
+      "id": 1,
+      "name": "banana_peel",
+      "category": "organic",
+      "target_bin": "compost",
+      "material": "organic",
+      "description": "Discarded banana peels and skins"
+    },
+    {
+      "id": 2,
+      "name": "biscuit_wrapper",
+      "category": "plastic",
+      "target_bin": "recyclable",
+      "material": "multi_layer_plastic",
+      "description": "Metallized BOPP biscuit and snack wrappers"
+    },
+    {
+      "id": 3,
+      "name": "broken_plastic_toys",
+      "category": "landfill",
+      "target_bin": "landfill",
+      "material": "mixed_plastic",
+      "description": "Non-recyclable composite or hard plastic toys"
+    },
+    {
+      "id": 4,
+      "name": "cardboard",
+      "category": "recyclables",
+      "target_bin": "recyclable",
+      "material": "corrugated_fiberboard",
+      "description": "Corrugated packaging boxes, cardboard cartons"
+    },
+    {
+      "id": 5,
+      "name": "ceramic",
+      "category": "landfill",
+      "target_bin": "landfill",
+      "material": "ceramic",
+      "description": "Broken ceramic plates, cups, crockery"
+    },
+    {
+      "id": 6,
+      "name": "chips_packet",
+      "category": "plastic",
+      "target_bin": "recyclable",
+      "material": "multi_layer_plastic",
+      "description": "Laminated potato chips packets (Lay's, Bingo, etc.)"
+    },
+    {
+      "id": 7,
+      "name": "cigarette_butt",
+      "category": "landfill",
+      "target_bin": "landfill",
+      "material": "cellulose_acetate",
+      "description": "Discarded cigarette filters"
+    },
+    {
+      "id": 8,
+      "name": "coconut_shell",
+      "category": "organic",
+      "target_bin": "compost",
+      "material": "organic_fibrous",
+      "description": "Dry or fresh coconut husks and shells"
+    },
+    {
+      "id": 9,
+      "name": "egg_shell",
+      "category": "organic",
+      "target_bin": "compost",
+      "material": "calcium_carbonate",
+      "description": "Egg shells from cooking waste"
+    },
+    {
+      "id": 10,
+      "name": "fruit_waste",
+      "category": "organic",
+      "target_bin": "compost",
+      "material": "organic",
+      "description": "Citrus peels, apple cores, watermelon rinds, rotten fruits"
+    },
+    {
+      "id": 11,
+      "name": "glass_bottle",
+      "category": "recyclables",
+      "target_bin": "recyclable",
+      "material": "glass",
+      "description": "Clear, green, or amber glass beverage bottles"
+    },
+    {
+      "id": 12,
+      "name": "glass_jar",
+      "category": "recyclables",
+      "target_bin": "recyclable",
+      "material": "glass",
+      "description": "Pickle jars, jam jars, sauce jars"
+    },
+    {
+      "id": 13,
+      "name": "hdpe_bottle",
+      "category": "plastic",
+      "target_bin": "recyclable",
+      "material": "hdpe",
+      "description": "High-density polyethylene containers (detergent, sanitizer, oil)"
+    },
+    {
+      "id": 14,
+      "name": "kurkure_packet",
+      "category": "plastic",
+      "target_bin": "recyclable",
+      "material": "multi_layer_plastic",
+      "description": "Extruded snack foil packaging commonly found in India"
+    },
+    {
+      "id": 15,
+      "name": "leaves",
+      "category": "organic",
+      "target_bin": "compost",
+      "material": "organic",
+      "description": "Dry or green plant leaves, garden trimmings"
+    },
+    {
+      "id": 16,
+      "name": "mask",
+      "category": "landfill",
+      "target_bin": "landfill",
+      "material": "polypropylene_nonwoven",
+      "description": "Disposable surgical masks, N95 masks"
+    },
+    {
+      "id": 17,
+      "name": "milk_packet",
+      "category": "plastic",
+      "target_bin": "recyclable",
+      "material": "ldpe",
+      "description": "Low-density polyethylene milk pouches (Amul, Nandini, Mother Dairy)"
+    },
+    {
+      "id": 18,
+      "name": "newspaper",
+      "category": "recyclables",
+      "target_bin": "recyclable",
+      "material": "newsprint",
+      "description": "Old newspapers, pamphlets, brochures"
+    },
+    {
+      "id": 19,
+      "name": "paper_cup",
+      "category": "recyclables",
+      "target_bin": "recyclable",
+      "material": "poly_coated_paper",
+      "description": "Chai/tea and coffee disposable paper cups"
+    },
+    {
+      "id": 20,
+      "name": "pet_bottle",
+      "category": "plastic",
+      "target_bin": "recyclable",
+      "material": "pet",
+      "description": "Polyethylene terephthalate transparent water and soda bottles"
+    },
+    {
+      "id": 21,
+      "name": "plastic_carry_bag",
+      "category": "plastic",
+      "target_bin": "recyclable",
+      "material": "ldpe_hdpe",
+      "description": "Single-use grocery carry bags"
+    },
+    {
+      "id": 22,
+      "name": "rice_waste",
+      "category": "organic",
+      "target_bin": "compost",
+      "material": "organic",
+      "description": "Cooked rice and cereal grains"
+    },
+    {
+      "id": 23,
+      "name": "sanitary_waste",
+      "category": "landfill",
+      "target_bin": "landfill",
+      "material": "bio_landfill",
+      "description": "Diapers, sanitary napkins, biomedical home waste"
+    },
+    {
+      "id": 24,
+      "name": "shampoo_bottle",
+      "category": "plastic",
+      "target_bin": "recyclable",
+      "material": "hdpe_pp",
+      "description": "Cosmetic, shampoo, and conditioner bottles"
+    },
+    {
+      "id": 25,
+      "name": "styrofoam",
+      "category": "landfill",
+      "target_bin": "landfill",
+      "material": "expanded_polystyrene",
+      "description": "Thermocol packing pieces, food containers"
+    },
+    {
+      "id": 26,
+      "name": "tea_bag",
+      "category": "organic",
+      "target_bin": "compost",
+      "material": "organic",
+      "description": "Used tea bags and loose tea powder"
+    },
+    {
+      "id": 27,
+      "name": "tetra_pak",
+      "category": "recyclables",
+      "target_bin": "recyclable",
+      "material": "aseptic_multi_layer",
+      "description": "Juice and dairy Tetra Paks (Frooti, Real, Amul Kool)"
+    },
+    {
+      "id": 28,
+      "name": "tin_can",
+      "category": "recyclables",
+      "target_bin": "recyclable",
+      "material": "tinplate_steel",
+      "description": "Food tins, sweet boxes, ghee cans"
+    },
+    {
+      "id": 29,
+      "name": "tissue",
+      "category": "landfill",
+      "target_bin": "landfill",
+      "material": "soiled_cellulose",
+      "description": "Used paper napkins, wet wipes, tissue papers"
+    },
+    {
+      "id": 30,
+      "name": "vegetable_waste",
+      "category": "organic",
+      "target_bin": "compost",
+      "material": "organic",
+      "description": "Raw vegetable peels, stems, rotten vegetables"
+    },
+    {
+      "id": 31,
+      "name": "water_sachet",
+      "category": "plastic",
+      "target_bin": "recyclable",
+      "material": "ldpe",
+      "description": "Single-serve packaged drinking water pouches"
+    }
+  ]
+}

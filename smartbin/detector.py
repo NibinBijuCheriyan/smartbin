@@ -120,7 +120,7 @@ class YOLODetector(BaseDetector):
         model_config: ModelConfig,
         tracker_config: TrackerConfig,
     ) -> None:
-        self._conf_threshold = model_config.confidence_threshold
+        self._conf_threshold = model_config.get_min_confidence_threshold()
         self._tracker_type = f"{tracker_config.type}.yaml"
         self._model = None
         self._model_config = model_config
@@ -241,6 +241,16 @@ class YOLODetector(BaseDetector):
                 raw_yolo_class=class_str,
                 raw_yolo_conf=conf_val,
             )
+            # Per-class confidence filter: YOLO's conf= uses the global
+            # minimum so nothing is prematurely dropped; we apply the real
+            # per-class threshold here.
+            per_class_thresh = self._model_config.get_confidence_threshold(class_str)
+            if conf_val < per_class_thresh:
+                logger.debug(
+                    "Dropping %s detection (conf=%.3f < threshold=%.3f)",
+                    class_str, conf_val, per_class_thresh,
+                )
+                continue
             if self._is_valid_detection(det, frame.shape):
                 detections.append(det)
 

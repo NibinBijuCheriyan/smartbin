@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 from smartbin.config import VoterConfig
 
@@ -59,8 +59,9 @@ class MajorityVoter:
     5. If winning_count / total_frames < min_consensus_ratio → uncertain.
     """
 
-    def __init__(self, config: VoterConfig) -> None:
+    def __init__(self, config: VoterConfig, confidence_thresholds: Optional[Union[float, Dict[str, float]]] = None) -> None:
         self._min_consensus_ratio = config.min_consensus_ratio
+        self._confidence_thresholds = confidence_thresholds
 
     def vote(
         self,
@@ -145,6 +146,25 @@ class MajorityVoter:
         # Step 4: Check consensus ratio
         consensus_ratio = agreeing_frames / total_frames
         is_certain = consensus_ratio >= self._min_consensus_ratio
+
+        # Per-class confidence threshold check: if the winning class's
+        # consensus confidence is below its per-class threshold, mark
+        # the decision as uncertain (flag-only — does not suppress hooks).
+        if is_certain and self._confidence_thresholds is not None:
+            if isinstance(self._confidence_thresholds, dict):
+                cls_thresh = self._confidence_thresholds.get(
+                    winning_class.lower(),
+                    min(self._confidence_thresholds.values()),
+                )
+            else:
+                cls_thresh = self._confidence_thresholds
+            if consensus_confidence < cls_thresh:
+                logger.debug(
+                    "Voter: track %d '%s' below per-class threshold "
+                    "(%.3f < %.3f) — marking uncertain",
+                    track_id, winning_class, consensus_confidence, cls_thresh,
+                )
+                is_certain = False
 
         # Determine hand tracking summary
         winning_hand_id = Counter(hand_ids).most_common(1)[0][0] if hand_ids else None

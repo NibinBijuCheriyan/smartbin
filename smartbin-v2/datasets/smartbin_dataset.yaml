@@ -1,0 +1,43 @@
+# Ultralytics YOLO Dataset Configuration for SmartBin AI v2
+path: ../datasets # Dataset root dir relative to runs
+train: splits/train/images
+val: splits/val/images
+test: splits/test/images
+
+# Classes count
+nc: 32
+
+# Class names mapping
+names:
+  0: aluminium_can
+  1: banana_peel
+  2: biscuit_wrapper
+  3: broken_plastic_toys
+  4: cardboard
+  5: ceramic
+  6: chips_packet
+  7: cigarette_butt
+  8: coconut_shell
+  9: egg_shell
+  10: fruit_waste
+  11: glass_bottle
+  12: glass_jar
+  13: hdpe_bottle
+  14: kurkure_packet
+  15: leaves
+  16: mask
+  17: milk_packet
+  18: newspaper
+  19: paper_cup
+  20: pet_bottle
+  21: plastic_carry_bag
+  22: rice_waste
+  23: sanitary_waste
+  24: shampoo_bottle
+  25: styrofoam
+  26: tea_bag
+  27: tetra_pak
+  28: tin_can
+  29: tissue
+  30: vegetable_waste
+  31: water_sachet

@@ -53,7 +53,10 @@ class SmartbinPipeline:
 
         # Instantiate components
         self._trigger: BaseTrigger = create_trigger(config.trigger)
-        self._state_machine = StateMachine(config.buffer, config.voter)
+        self._state_machine = StateMachine(
+            config.buffer, config.voter,
+            confidence_thresholds=config.model.confidence_threshold,
+        )
         self._detector: BaseDetector = create_detector(
             config.model, config.tracker
         )

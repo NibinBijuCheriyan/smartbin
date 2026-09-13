@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict, deque
 from enum import Enum, auto
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 from smartbin.config import BufferConfig, VoterConfig
 from smartbin.decision import DecisionEvent
@@ -55,11 +55,12 @@ class StateMachine:
         self,
         buffer_config: BufferConfig,
         voter_config: VoterConfig,
+        confidence_thresholds: Optional[Union[float, Dict[str, float]]] = None,
     ) -> None:
         self._window_size = buffer_config.active_window_size
         self._idle_timeout = buffer_config.idle_timeout_frames
         self._min_frames = buffer_config.min_frames_for_decision
-        self._voter = MajorityVoter(voter_config)
+        self._voter = MajorityVoter(voter_config, confidence_thresholds=confidence_thresholds)
 
         # Runtime state
         self._state = BinState.IDLE

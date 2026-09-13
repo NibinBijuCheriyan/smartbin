@@ -89,3 +89,29 @@ def test_detector_allows_classes_in_class_agnostic_mode():
 
     assert detector._is_valid_detection(person, frame_shape) is True
     assert detector._is_valid_detection(plastic, frame_shape) is True
+
+
+def test_detector_per_class_confidence_threshold():
+    """Dict confidence_threshold computes correct min for YOLO conf= param."""
+    thresholds = {"plastic": 0.40, "paper": 0.40, "other": 0.55}
+    detector = YOLODetector(
+        ModelConfig(
+            allowed_classes=["plastic", "paper", "other"],
+            confidence_threshold=thresholds,
+        ),
+        TrackerConfig(),
+    )
+    # The YOLO conf= parameter should use the minimum threshold
+    assert detector._conf_threshold == 0.40
+
+
+def test_detector_per_class_threshold_uses_min_for_scalar():
+    """Scalar confidence_threshold is used directly as conf= param."""
+    detector = YOLODetector(
+        ModelConfig(
+            allowed_classes=["plastic"],
+            confidence_threshold=0.35,
+        ),
+        TrackerConfig(),
+    )
+    assert detector._conf_threshold == 0.35

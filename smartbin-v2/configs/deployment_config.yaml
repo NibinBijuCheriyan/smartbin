@@ -1,0 +1,89 @@
+# ============================================================================
+# SmartBin AI v2 — Edge Deployment & Multi-Stage Pipeline Configuration
+# ============================================================================
+
+runtime:
+  target_hardware: "raspberry_pi_5" # "raspberry_pi_5", "jetson_nano", "x86_server"
+  # Backend options: "onnx", "openvino", "tflite", "pytorch"
+  inference_backend: "onnx"
+  model_path: "smartbin-v2/models/smartbin_yolo11s.onnx"
+  int8_quantized: false
+  num_threads: 4
+
+camera:
+  source: 0 # 0 for default USB camera, or "rpicam" for Raspberry Pi Camera Module 3
+  driver: "auto" # "picamera2", "opencv", "v4l2"
+  width: 640
+  height: 640
+  fps: 30
+  exposure_mode: "sports" # For fast-moving waste objects
+  awb_mode: "auto"
+  warmup_frames: 10
+
+tracker:
+  type: "bytetrack"
+  track_thresh: 0.45
+  track_buffer: 25
+  match_thresh: 0.75
+  frame_rate: 30
+
+prioritization:
+  weights:
+    area: 0.40 # Preference for dominant objects
+    center_distance: 0.40 # Preference for objects near center of bin chute
+    confidence: 0.20 # Detection certainty
+  min_area_fraction: 0.005 # Reject tiny dust/debris
+  max_area_fraction: 0.85 # Reject background occlusions
+
+temporal_voting:
+  window_size: 5 # 5 consecutive frames
+  min_consensus_ratio: 0.60 # At least 60% agreement to fire servo
+  timeout_seconds: 2.5
+  require_stable_track: true
+
+material_classifier:
+  enabled: true
+  model_type: "tflite" # "tflite", "onnx", "pytorch"
+  model_path: "smartbin-v2/models/material_classifier.tflite"
+  input_size: [224, 224]
+  confidence_threshold: 0.40
+  fusion_weight: 0.35 # Weight given to 2nd stage material head vs YOLO class
+
+contamination_detector:
+  enabled: true
+  model_path: "smartbin-v2/models/contamination_classifier.tflite"
+  input_size: [224, 224]
+  contamination_threshold: 0.65 # Confidence above which an item is marked dirty
+  reroute_to_landfill: true # If recyclable is contaminated, send to landfill/reject
+
+rejection:
+  unknown_class_threshold: 0.40 # Below this, mark as unknown_waste
+  reject_on_hand_detected: true
+  reject_on_contamination: true
+
+arduino_servo:
+  enabled: true
+  port: "/dev/ttyACM0" # COM3 on Windows, /dev/ttyACM0 on Raspberry Pi
+  baudrate: 115200
+  timeout: 1.0
+  reconnect_interval_sec: 3.0
+  servo_angles:
+    home: 90
+    recyclable: 30
+    compost: 90
+    landfill: 150
+    reject: 0
+  dwell_time_ms: 1200 # Time chute remains open before returning to home
+
+active_learning:
+  enabled: true
+  queue_dir: "smartbin-v2/retraining_queue"
+  uncertainty_threshold: 0.55 # Save images with max confidence between 0.30 and 0.55
+  entropy_threshold: 1.2 # Save predictions with high class entropy
+  max_stored_samples: 5000
+
+logging:
+  level: "INFO"
+  log_file: "smartbin-v2/logs/system.log"
+  decision_log: "smartbin-v2/logs/decisions.jsonl"
+  offline_queue_db: "smartbin-v2/logs/offline_events.db"

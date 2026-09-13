@@ -1,0 +1,35 @@
+version: "3.8"
+
+services:
+  smartbin-api:
+    build:
+      context: ..
+      dockerfile: smartbin-v2/Dockerfile
+    container_name: smartbin-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ../smartbin-v2/models:/app/smartbin-v2/models
+      - ../smartbin-v2/logs:/app/smartbin-v2/logs
+      - ../smartbin-v2/retraining_queue:/app/smartbin-v2/retraining_queue
+    devices:
+      - "/dev/video0:/dev/video0" # Pass camera to container if present
+
+  smartbin-dashboard:
+    build:
+      context: ..
+      dockerfile: smartbin-v2/Dockerfile
+    container_name: smartbin-dashboard
+    restart: unless-stopped
+    command: ["streamlit", "run", "smartbin-v2/dashboard/app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+    ports:
+      - "8501:8501"
+    volumes:
+      - ../smartbin-v2/logs:/app/smartbin-v2/logs
+      - ../smartbin-v2/datasets/reports:/app/smartbin-v2/datasets/reports
+      - ../smartbin-v2/evaluation_report:/app/smartbin-v2/evaluation_report
+    depends_on:
+      - smartbin-api

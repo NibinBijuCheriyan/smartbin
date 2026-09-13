@@ -940,10 +940,17 @@ def main() -> None:
         help="Use synthetic mock dataset instead of real data (for testing only).",
     )
     parser.add_argument(
+        "--model-size",
+        type=str,
+        default="s",
+        choices=["n", "s", "m"],
+        help="YOLO model size: n (nano), s (small, default), m (medium).",
+    )
+    parser.add_argument(
         "--epochs",
         type=int,
-        default=50,
-        help="Number of training epochs (default: 50).",
+        default=100,
+        help="Number of training epochs (default: 100).",
     )
     parser.add_argument(
         "--patience",
@@ -1049,9 +1056,12 @@ names:
     device = detect_device(args.device)
 
     # --- Train YOLO Model ---
+    checkpoint = f"yolo11{args.model_size}.pt"
+
     logger.info("")
     logger.info("=" * 60)
     logger.info("Starting YOLO training")
+    logger.info("  Model:    %s (yolo11%s)", checkpoint, args.model_size)
     logger.info("  Epochs:   %d (patience=%d)", args.epochs, args.patience)
     logger.info("  Image sz: %d", args.imgsz)
     logger.info("  Device:   %s", device)
@@ -1059,7 +1069,7 @@ names:
 
     from ultralytics import YOLO
 
-    model = YOLO("yolo11n.pt")
+    model = YOLO(checkpoint)
 
     # Run training with augmentations appropriate for small datasets
     model.train(
@@ -1077,12 +1087,13 @@ names:
         hsv_v=0.4,
         mosaic=1.0,
         mixup=0.1,
-        copy_paste=0.1,
+        copy_paste=0.3,
+        cos_lr=True,
         workers=2,
     )
 
     logger.info("Augmentation settings: degrees=15, translate=0.1, scale=0.5, "
-                "hsv_h=0.015, hsv_s=0.7, hsv_v=0.4, mosaic=1.0, mixup=0.1, copy_paste=0.1")
+                "hsv_h=0.015, hsv_s=0.7, hsv_v=0.4, mosaic=1.0, mixup=0.1, copy_paste=0.3, cos_lr=True")
 
     # --- Copy best weights ---
     best_weights_dst = Path("best.pt")

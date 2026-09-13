@@ -1,0 +1,78 @@
+# ============================================================================
+# SmartBin AI v2 — Dataset Engineering & Ingestion Configuration
+# ============================================================================
+
+project_name: "smartbin-v2-dataset"
+version: "2.0.0"
+
+paths:
+  raw_dir: "smartbin-v2/datasets/raw"
+  processed_dir: "smartbin-v2/datasets/processed"
+  splits_dir: "smartbin-v2/datasets/splits"
+  reports_dir: "smartbin-v2/datasets/reports"
+  yaml_output: "smartbin-v2/datasets/smartbin_dataset.yaml"
+
+split_ratios:
+  train: 0.70
+  val: 0.15
+  test: 0.15
+  seed: 42
+  stratified: true
+
+image_specs:
+  target_size: [640, 640]
+  keep_aspect_ratio: true
+  pad_color: [114, 114, 114]
+  color_space: "RGB"
+  supported_extensions: [".jpg", ".jpeg", ".png", ".webp"]
+
+deduplication:
+  enabled: true
+  hash_algorithm: "phash" # "phash", "dhash", "ahash"
+  hash_size: 8
+  hamming_threshold: 4 # Distance <= 4 indicates duplicate or near-duplicate
+
+quality_audit:
+  check_corrupt: true
+  check_empty_annotations: true
+  check_out_of_bounds: true
+  check_extreme_aspect_ratios: true
+  generate_heatmaps: true
+  generate_distribution_chart: true
+
+# Public & Community Dataset Ingestion Sources
+sources:
+  trashnet:
+    name: "TrashNet"
+    url: "https://github.com/garythung/trashnet"
+    format: "classification_folders"
+    enabled: true
+  taco:
+    name: "TACO (Trash Annotations in Context)"
+    url: "https://github.com/pedropro/TACO"
+    format: "coco"
+    enabled: true
+  wastenet:
+    name: "WasteNet"
+    format: "yolo"
+    enabled: true
+  deepwaste:
+    name: "DeepWaste"
+    format: "coco"
+    enabled: true
+  open_images_v7:
+    name: "Open Images V7 Waste Subset"
+    format: "openimages_csv"
+    enabled: true
+  kaggle_garbage:
+    name: "Garbage Classification Dataset"
+    format: "classification_folders"
+    enabled: true
+  roboflow_waste:
+    name: "Roboflow Universe Waste Aggregation"
+    format: "yolo"
+    enabled: true
+  indian_custom:
+    name: "SmartBin Indian Municipal Waste"
+    format: "yolo"
+    enabled: true

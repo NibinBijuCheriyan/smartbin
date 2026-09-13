@@ -1,0 +1,106 @@
+# ============================================================================
+# SmartBin AI v2 — Model Architecture & Taxonomy Configuration
+# ============================================================================
+
+model:
+  # Base YOLO model: yolo11n, yolo11s (default), yolo11m, yolo11x, yolo11s-seg
+  architecture: "yolo11s.pt"
+  task: "detect" # "detect" or "segment"
+  input_size: [640, 640]
+  confidence_threshold: 0.45
+  iou_threshold: 0.50
+  max_det: 50
+  device: "auto" # "auto", "cpu", "cuda:0", "mps"
+  half: false # FP16 mixed precision on supported hardware
+  agnostic_nms: false
+
+# Authoritative 32-class Indian Waste Taxonomy with Category Groupings.
+taxonomy:
+  num_classes: 32
+  categories:
+    plastic:
+      bin: "recyclable"
+      classes:
+        - "pet_bottle"
+        - "hdpe_bottle"
+        - "milk_packet"
+        - "plastic_carry_bag"
+        - "water_sachet"
+        - "shampoo_bottle"
+        - "chips_packet"
+        - "kurkure_packet"
+        - "biscuit_wrapper"
+    organic:
+      bin: "compost"
+      classes:
+        - "banana_peel"
+        - "coconut_shell"
+        - "egg_shell"
+        - "rice_waste"
+        - "vegetable_waste"
+        - "fruit_waste"
+        - "tea_bag"
+        - "leaves"
+    recyclable_other:
+      bin: "recyclable"
+      classes:
+        - "aluminium_can"
+        - "tin_can"
+        - "glass_bottle"
+        - "glass_jar"
+        - "newspaper"
+        - "cardboard"
+        - "paper_cup"
+        - "tetra_pak"
+    landfill:
+      bin: "landfill"
+      classes:
+        - "styrofoam"
+        - "tissue"
+        - "mask"
+        - "cigarette_butt"
+        - "sanitary_waste"
+        - "ceramic"
+        - "broken_plastic_toys"
+
+# Physical sorting compartments mapping
+compartment_mapping:
+  recyclable: 1
+  compost: 2
+  landfill: 3
+  reject: 4 # For contaminated or unconfident items
+
+# Class ID to name lookup. IDs must match the dataset YAML and exported model.
+class_names:
+  0: "aluminium_can"
+  1: "banana_peel"
+  2: "biscuit_wrapper"
+  3: "broken_plastic_toys"
+  4: "cardboard"
+  5: "ceramic"
+  6: "chips_packet"
+  7: "cigarette_butt"
+  8: "coconut_shell"
+  9: "egg_shell"
+  10: "fruit_waste"
+  11: "glass_bottle"
+  12: "glass_jar"
+  13: "hdpe_bottle"
+  14: "kurkure_packet"
+  15: "leaves"
+  16: "mask"
+  17: "milk_packet"
+  18: "newspaper"
+  19: "paper_cup"
+  20: "pet_bottle"
+  21: "plastic_carry_bag"
+  22: "rice_waste"
+  23: "sanitary_waste"
+  24: "shampoo_bottle"
+  25: "styrofoam"
+  26: "tea_bag"
+  27: "tetra_pak"
+  28: "tin_can"
+  29: "tissue"
+  30: "vegetable_waste"
+  31: "water_sachet"

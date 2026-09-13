@@ -12,7 +12,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 import yaml
 
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class ModelConfig:
     weights: str = "yolo11n.pt"
-    confidence_threshold: float = 0.25
+    confidence_threshold: Union[float, Dict[str, float]] = 0.25
     device: str = "auto"
     allowed_classes: Optional[List[str]] = None
     min_box_area_fraction: float = 0.0005
@@ -34,6 +34,33 @@ class ModelConfig:
     min_box_aspect_ratio: float = 0.1
     max_box_aspect_ratio: float = 10.0
     class_agnostic: bool = False
+
+    def get_confidence_threshold(self, class_name: str) -> float:
+        """Return the confidence threshold for a given class name.
+
+        If confidence_threshold is a dict, look up the class name (case-insensitive).
+        Falls back to the minimum value in the dict if the class is unknown.
+        If confidence_threshold is a scalar float, return it for all classes.
+        """
+        if isinstance(self.confidence_threshold, dict):
+            key = class_name.lower()
+            if key in self.confidence_threshold:
+                return self.confidence_threshold[key]
+            # Fallback for unknown classes: use minimum threshold to avoid
+            # accidentally dropping valid detections.
+            return min(self.confidence_threshold.values())
+        return self.confidence_threshold
+
+    def get_min_confidence_threshold(self) -> float:
+        """Return the minimum confidence threshold across all classes.
+
+        Used as the conf= parameter for YOLO inference (Ultralytics only
+        accepts a single float), so no valid detections are prematurely
+        dropped before per-class filtering in Python.
+        """
+        if isinstance(self.confidence_threshold, dict):
+            return min(self.confidence_threshold.values())
+        return self.confidence_threshold
 
 
 @dataclass(frozen=True)

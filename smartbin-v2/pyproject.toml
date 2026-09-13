@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smartbin-v2"
+version = "2.0.0"
+description = "Industrial-grade Computer Vision Waste Segregation Engine for Raspberry Pi 5 and Jetson Nano"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Nibin Biju Cheriyan", email = "nibinc@smartbin.ai"}
+]
+dependencies = [
+    "ultralytics>=8.1.0",
+    "opencv-python>=4.8.0",
+    "pyyaml>=6.0",
+    "numpy>=1.24.0",
+    "pillow>=10.0.0",
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0",
+    "pydantic>=2.5.0",
+    "psutil>=5.9.0",
+    "matplotlib>=3.8.0",
+    "requests>=2.31.0",
+    "pyserial>=3.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.3.0",
+    "black>=24.2.0",
+    "httpx>=0.26.0",
+]
+edge = [
+    "onnxruntime>=1.16.0",
+]
+dashboard = [
+    "streamlit>=1.30.0",
+    "pandas>=2.0.0",
+]
+
+[project.scripts]
+smartbin-daemon = "smartbin_v2.deployment.run_daemon:main"
+smartbin-api = "smartbin_v2.api.main:app"
+smartbin-dashboard = "smartbin_v2.dashboard.app:main"
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["smartbin_v2*", "smartbin*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100

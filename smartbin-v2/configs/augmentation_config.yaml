@@ -1,0 +1,127 @@
+# ============================================================================
+# SmartBin AI v2 — Data Augmentation Configuration (Albumentations)
+# ============================================================================
+
+augmentation:
+  enabled: true
+  p_global: 0.85 # Global probability of applying augmentation pipeline
+
+  # 1. Lighting Robustness
+  lighting:
+    clahe:
+      enabled: true
+      p: 0.4
+      clip_limit: [1.0, 4.0]
+      tile_grid_size: [8, 8]
+    random_brightness_contrast:
+      enabled: true
+      p: 0.5
+      brightness_limit: [-0.25, 0.25]
+      contrast_limit: [-0.25, 0.25]
+    random_gamma:
+      enabled: true
+      p: 0.3
+      gamma_limit: [80, 130]
+    color_jitter:
+      enabled: true
+      p: 0.3
+      brightness: 0.2
+      contrast: 0.2
+      saturation: 0.2
+      hue: 0.05
+
+  # 2. Geometry Invariance
+  geometry:
+    horizontal_flip:
+      enabled: true
+      p: 0.5
+    vertical_flip:
+      enabled: true
+      p: 0.2
+    shift_scale_rotate:
+      enabled: true
+      p: 0.5
+      shift_limit: 0.0625
+      scale_limit: 0.15
+      rotate_limit: 30
+      border_mode: 0 # cv2.BORDER_CONSTANT
+    perspective:
+      enabled: true
+      p: 0.3
+      scale: [0.05, 0.10]
+    random_crop:
+      enabled: false
+      p: 0.2
+
+  # 3. Weather & Environmental Effects
+  weather:
+    random_shadow:
+      enabled: true
+      p: 0.35
+      num_shadows_limit: [1, 3]
+      shadow_dimension: 5
+    random_sun_flare:
+      enabled: true
+      p: 0.25
+      flare_roi: [0, 0, 1, 0.5]
+      angle_range: [0, 1]
+    random_fog:
+      enabled: true
+      p: 0.2
+      fog_coef_lower: 0.1
+      fog_coef_upper: 0.4
+      alpha_coef: 0.08
+    random_rain:
+      enabled: true
+      p: 0.15
+      slant_lower: -10
+      slant_upper: 10
+      drop_length: 20
+      drop_width: 1
+      drop_color: [200, 200, 200]
+
+  # 4. Camera Noise & Raspberry Pi Sensor Artifacts
+  camera_noise:
+    gaussian_noise:
+      enabled: true
+      p: 0.35
+      var_limit: [10.0, 50.0]
+    rpi_sensor_noise: # Simulates low-light CMOS sensor noise
+      enabled: true
+      p: 0.3
+      noise_factor: 0.04
+    motion_blur:
+      enabled: true
+      p: 0.25
+      blur_limit: [3, 7]
+    jpeg_compression:
+      enabled: true
+      p: 0.4
+      quality_range: [60, 95]
+
+  # 5. Occlusion & Partial Covering
+  occlusion:
+    cutout: # CoarseDropout
+      enabled: true
+      p: 0.4
+      num_holes_range: [2, 6]
+      hole_height_range: [16, 64]
+      hole_width_range: [16, 64]
+      fill_value: 0
+    partial_covering:
+      enabled: true
+      p: 0.25
+      coverage_ratio: 0.2
+
+  # 6. Advanced Mixing
+  mixing:
+    mosaic:
+      enabled: true
+      p: 0.5
+    mixup:
+      enabled: true
+      p: 0.2
+      alpha: 0.2
+    copy_paste:
+      enabled: true
+      p: 0.3
