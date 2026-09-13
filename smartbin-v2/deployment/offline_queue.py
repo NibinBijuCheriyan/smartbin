@@ -9,7 +9,7 @@ import json
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from smartbin_v2.utils.logger import get_logger

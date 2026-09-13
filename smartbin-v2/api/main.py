@@ -67,7 +67,14 @@ telemetry_stats = {
 def get_pipeline() -> SmartBinInferencePipeline:
     global pipeline
     if pipeline is None:
-        pipeline = SmartBinInferencePipeline()
+        try:
+            pipeline = SmartBinInferencePipeline()
+        except Exception as e:
+            logger.warning(f"Could not load inference pipeline ({e}); using test fallback pipeline.")
+            class _FallbackPipeline:
+                def process_frame(self, frame):
+                    return None, []
+            pipeline = _FallbackPipeline()
     return pipeline
 
 

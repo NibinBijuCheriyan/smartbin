@@ -150,10 +150,13 @@ class MaterialClassifier:
         if crop.size == 0:
             return detection
 
-        material_pred, mat_conf = self.predict_material(crop)
+        compatible_materials = MATERIAL_COMPATIBILITY.get(detection.class_name, [])
+
         if not self.is_ready:
+            detection.material = compatible_materials[0] if compatible_materials else "unknown_material"
             return detection
 
+        material_pred, mat_conf = self.predict_material(crop)
         detection.material = material_pred
 
         # Fused Confidence:
