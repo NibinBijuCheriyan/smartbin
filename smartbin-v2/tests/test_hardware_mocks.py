@@ -58,13 +58,19 @@ def test_offline_event_queue(tmp_path: Path):
 
 def test_rpi_camera_opencv_fallback():
     """Verify fallback to OpenCV when Picamera2 is unavailable."""
-    driver = RPiCameraDriver(source="test_video.avi", prefer_picamera2=False)
-    assert driver.backend_type == "opencv"
-    ret, frame = driver.read_frame()
-    assert ret is True
-    assert frame is not None
-    assert len(frame.shape) == 3
-    driver.release()
+    mock_cap = MagicMock()
+    mock_cap.isOpened.return_value = True
+    dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    mock_cap.read.return_value = (True, dummy_frame)
+
+    with patch("cv2.VideoCapture", return_value=mock_cap):
+        driver = RPiCameraDriver(source="test_video.avi", prefer_picamera2=False)
+        assert driver.backend_type == "opencv"
+        ret, frame = driver.read_frame()
+        assert ret is True
+        assert frame is not None
+        assert len(frame.shape) == 3
+        driver.release()
 
 
 def test_rpi_camera_mock_picamera2():
